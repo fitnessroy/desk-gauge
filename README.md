@@ -17,7 +17,7 @@ A two-screen round desk gauge on an ESP32:
 | | Board | Screens |
 |---|---|---|
 | `esp32dev` | ESP32 DevKit V1 (WROOM-32) | none: use the web preview |
-| `esp32s3` | ESP32-S3 DevKitC-1 **N16R8** | 2× 1.8\" ST77916 360×360 QSPI |
+| `esp32s3` | ESP32-S3 DevKitC-1 **N16R8** | 2× 1.8" ST77916 360×360 QSPI |
 
 ### Wiring (ESP32-S3)
 
