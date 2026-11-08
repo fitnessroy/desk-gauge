@@ -8,8 +8,8 @@
 
 #define HOSTNAME "desk-gauge"
 
-// Native panel resolution. Common AliExpress round panels: GC9A01 240x240 (1.28"),
-// ST77916 360x360 (1.8"/1.85", QSPI). The UI scales from this.
+// Native panel resolution. The S3 build sets 360x360 for the ST77916 panels; the
+// no-screen preview build keeps 240x240 to fit in heap. The UI scales from this.
 #ifndef PANEL_W
 #define PANEL_W 240
 #endif
@@ -28,18 +28,9 @@
 #define BAMBU_DUMP_RAW 0
 #define BAMBU_MQTT_BUFFER 16384
 
-// ESP32-S3 panel wiring. Each panel gets its own SPI host so they never contend.
-// Avoid GPIO 35-37 (octal PSRAM), 19/20 (USB), 0/3/45/46 (strapping), 48/38 (RGB LED).
-#define P0_SCLK 12
-#define P0_MOSI 11
-#define P0_CS   10
-#define P0_DC    9
-#define P0_RST  14
-#define P0_BL   13
-
-#define P1_SCLK  4
-#define P1_MOSI  5
-#define P1_CS    6
-#define P1_DC    7
-#define P1_RST  15
-#define P1_BL   16
+// ESP32-S3 panel wiring (ST77916 QSPI). Each panel gets its own SPI host so they never contend.
+// Panel 0 uses the left header, panel 1 the right header of the DevKitC-1.
+// Avoid GPIO 35-37 (octal PSRAM), 19/20 (USB), 43/44 (UART0), 0/3/45/46 (strapping), 38/48 (RGB LED).
+//                       SCLK IO0 IO1 IO2 IO3  CS RST  BL
+#define PANEL0_PINS {    12,  11, 13, 14,  9, 10,  8, 18 }
+#define PANEL1_PINS {    41,  40, 39,  2,  1, 42, 21, 47 }

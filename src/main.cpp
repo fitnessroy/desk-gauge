@@ -11,8 +11,8 @@
 
 #if HAS_PANELS
 #include "panels.h"
-static RoundPanel panel0(SPI2_HOST, P0_SCLK, P0_MOSI, P0_DC, P0_CS, P0_RST, P0_BL, 6);
-static RoundPanel panel1(SPI3_HOST, P1_SCLK, P1_MOSI, P1_DC, P1_CS, P1_RST, P1_BL, 7);
+static RoundPanel panel0(SPI2_HOST, PanelPins PANEL0_PINS, 6);
+static RoundPanel panel1(SPI3_HOST, PanelPins PANEL1_PINS, 7);
 static LGFX_Sprite frame0(&panel0), frame1(&panel1);
 #endif
 

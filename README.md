@@ -7,7 +7,7 @@ A two-screen round desk gauge on an ESP32:
 
 ```
  Bambu printer ──MQTT/TLS :8883──┐
-                                 ├──> ESP32 ──> 2× round SPI panels
+                                 ├──> ESP32 ──> 2× ST77916 QSPI screens
  claude_usage_bridge.py ─HTTP────┘        └──> http://desk-gauge.local/ (live preview)
  (Mac / k3s, reads Claude Code login)
 ```
@@ -17,24 +17,28 @@ A two-screen round desk gauge on an ESP32:
 | | Board | Screens |
 |---|---|---|
 | `esp32dev` | ESP32 DevKit V1 (WROOM-32) | none: use the web preview |
-| `esp32s3` | ESP32-S3 DevKitC-1 **N16R8** | 2× round panel (GC9A01 SPI by default) |
+| `esp32s3` | ESP32-S3 DevKitC-1 **N16R8** | 2× 1.8\" ST77916 360×360 QSPI |
 
 ### Wiring (ESP32-S3)
 
-Each panel has its own SPI bus. You can change the pins in `include/config.h`.
+Screens: DIYUSER 1.8" round, 360×360, **ST77916 over QSPI** (header: GND VCC SCL IO0 IO1 IO2 IO3 RST CS BL TE).
+Each screen has its own QSPI bus (SPI2 / SPI3). The pins are set in `include/config.h` (`PANEL0_PINS`, `PANEL1_PINS`).
 
-| Panel pin | Panel 0 (Claude) | Panel 1 (Printer) |
+| Screen pin | Screen 0 (Claude) | Screen 1 (Printer) |
 |---|---|---|
-| VCC | 3V3 | 3V3 |
 | GND | GND | GND |
-| SCL / SCK | GPIO 12 | GPIO 4 |
-| SDA / MOSI | GPIO 11 | GPIO 5 |
-| CS | GPIO 10 | GPIO 6 |
-| DC | GPIO 9 | GPIO 7 |
-| RST | GPIO 14 | GPIO 15 |
-| BL | GPIO 13 | GPIO 16 |
+| VCC | 3V3 | 3V3 |
+| SCL | GPIO 12 | GPIO 41 |
+| IO0 | GPIO 11 | GPIO 40 |
+| IO1 | GPIO 13 | GPIO 39 |
+| IO2 | GPIO 14 | GPIO 2 |
+| IO3 | GPIO 9 | GPIO 1 |
+| RST | GPIO 8 | GPIO 21 |
+| CS | GPIO 10 | GPIO 42 |
+| BL | GPIO 18 | GPIO 47 |
+| TE | not connected | not connected |
 
-> If your panel isn't a GC9A01 (a 1.8" round panel is often 360×360 ST77916 over QSPI), you only need to change `src/panels.h` and `PANEL_W/PANEL_H`. The UI scales automatically.
+> The driver is LovyanGFX `Panel_ST77916` (`-DLGFX_USE_QSPI`). Its start-up settings come from the Guition JC3636W518. If colours look wrong, flip `invert` / `rgb_order` in `src/panels.h`. If the screen stays black with the backlight on, this screen needs its seller's own start-up settings.
 
 ## Setup
 
