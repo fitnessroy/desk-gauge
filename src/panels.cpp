@@ -1,0 +1,350 @@
+#include "panels.h"
+
+#if HAS_PANELS
+
+
+// Entries: cmd, n (| 0x80 = a delay in ms follows), n parameter bytes, [ms].
+//
+// Init sequence from Slmsim's ST77916 MJPEG player, which runs this exact module (1.8" 360x360
+// QSPI round, ESP32-S3 N16R8): github.com/Slmsim/1.8inch-360-360-QSPI-Round-Display-w-ST77916-ESP32-S3-N16R8-Mjpeg-Player
+// (PanelInit.h). Ends with INVON, SLPOUT, RGB565, MADCTL 0x00, DISPON.
+static const uint8_t kInitSlmsim[] = {
+    0x01, 0x80, 120,
+    0xF0, 1, 0x28,
+    0xF2, 1, 0x28,
+    0x73, 1, 0xF0,
+    0x76, 1, 0x0F,
+    0x7C, 1, 0xD1,
+    0x83, 1, 0xE0,
+    0x84, 1, 0x61,
+    0xF2, 1, 0x82,
+    0xF0, 1, 0x00,
+    0xF0, 1, 0x01,
+    0xF1, 1, 0x01,
+    0xB0, 1, 0x52,
+    0xB1, 1, 0x49,
+    0xB2, 1, 0x24,
+    0xB3, 1, 0x01,
+    0xB4, 1, 0x66,
+    0xB5, 1, 0x44,
+    0xB6, 1, 0xC5,
+    0xB7, 1, 0x40,
+    0xB8, 1, 0x86,
+    0xB9, 1, 0x15,
+    0xBA, 1, 0x00,
+    0xBB, 1, 0x08,
+    0xBC, 1, 0x08,
+    0xBD, 1, 0x00,
+    0xBE, 1, 0x00,
+    0xBF, 1, 0x07,
+    0xC0, 1, 0x80,
+    0xC1, 1, 0x10,
+    0xC2, 1, 0x37,
+    0xC3, 1, 0x80,
+    0xC4, 1, 0x10,
+    0xC5, 1, 0x37,
+    0xC6, 1, 0xA9,
+    0xC7, 1, 0x41,
+    0xC8, 1, 0x01,
+    0xC9, 1, 0xA9,
+    0xCA, 1, 0x41,
+    0xCB, 1, 0x01,
+    0xCC, 1, 0x7F,
+    0xCD, 1, 0x7F,
+    0xCE, 1, 0xFF,
+    0xD0, 1, 0x91,
+    0xD1, 1, 0x68,
+    0xD2, 1, 0x68,
+    0xF5, 2, 0x00, 0xA5,
+    0xF1, 1, 0x10,
+    0xF0, 1, 0x00,
+    0xF0, 1, 0x02,
+    0xE0, 14, 0xF0, 0x0E, 0x15, 0x0A, 0x0B, 0x07, 0x3E, 0x43, 0x53, 0x39, 0x17, 0x17, 0x35, 0x38,
+    0xE1, 14, 0xF0, 0x0D, 0x15, 0x0A, 0x0A, 0x06, 0x3D, 0x33, 0x52, 0x39, 0x16, 0x16, 0x35, 0x37,
+    0xF0, 1, 0x10,
+    0xF3, 1, 0x10,
+    0xE0, 1, 0x09,
+    0xE1, 1, 0x00,
+    0xE2, 1, 0x03,
+    0xE3, 1, 0x00,
+    0xE4, 1, 0xE0,
+    0xE5, 1, 0x06,
+    0xE6, 1, 0x21,
+    0xE7, 1, 0x00,
+    0xE8, 1, 0x05,
+    0xE9, 1, 0x82,
+    0xEA, 1, 0xDE,
+    0xEB, 1, 0xC0,
+    0xEC, 1, 0x40,
+    0xED, 1, 0x84,
+    0xEE, 1, 0xFF,
+    0xEF, 1, 0x71,
+    0xF8, 1, 0xFF,
+    0xF9, 1, 0x50,
+    0xFA, 1, 0xFF,
+    0xFB, 1, 0xF3,
+    0xFC, 1, 0x00,
+    0xFD, 1, 0x00,
+    0xFE, 1, 0x00,
+    0xFF, 1, 0x00,
+    0x60, 1, 0x42,
+    0x61, 1, 0xDF,
+    0x62, 1, 0x40,
+    0x63, 1, 0x40,
+    0x64, 1, 0x02,
+    0x65, 1, 0x00,
+    0x66, 1, 0x00,
+    0x67, 1, 0x00,
+    0x68, 1, 0x00,
+    0x69, 1, 0x00,
+    0x6A, 1, 0x00,
+    0x6B, 1, 0x00,
+    0x70, 1, 0x42,
+    0x71, 1, 0xDF,
+    0x72, 1, 0x40,
+    0x73, 1, 0x40,
+    0x74, 1, 0x01,
+    0x75, 1, 0x00,
+    0x76, 1, 0x00,
+    0x77, 1, 0x00,
+    0x78, 1, 0x00,
+    0x79, 1, 0x00,
+    0x7A, 1, 0x00,
+    0x7B, 1, 0x00,
+    0x80, 1, 0x48,
+    0x81, 1, 0x00,
+    0x82, 1, 0x04,
+    0x83, 1, 0x02,
+    0x84, 1, 0xDC,
+    0x85, 1, 0x00,
+    0x86, 1, 0x00,
+    0x87, 1, 0x00,
+    0x88, 1, 0x48,
+    0x89, 1, 0x00,
+    0x8A, 1, 0x06,
+    0x8B, 1, 0x02,
+    0x8C, 1, 0xDE,
+    0x8D, 1, 0x00,
+    0x8E, 1, 0x00,
+    0x8F, 1, 0x00,
+    0x90, 1, 0x48,
+    0x91, 1, 0x00,
+    0x92, 1, 0x08,
+    0x93, 1, 0x02,
+    0x94, 1, 0xE0,
+    0x95, 1, 0x00,
+    0x96, 1, 0x00,
+    0x97, 1, 0x00,
+    0x98, 1, 0x48,
+    0x99, 1, 0x00,
+    0x9A, 1, 0x0A,
+    0x9B, 1, 0x02,
+    0x9C, 1, 0xE2,
+    0x9D, 1, 0x00,
+    0x9E, 1, 0x00,
+    0x9F, 1, 0x00,
+    0xA0, 1, 0x48,
+    0xA1, 1, 0x00,
+    0xA2, 1, 0x03,
+    0xA3, 1, 0x02,
+    0xA4, 1, 0xDB,
+    0xA5, 1, 0x00,
+    0xA6, 1, 0x00,
+    0xA7, 1, 0x00,
+    0xA8, 1, 0x48,
+    0xA9, 1, 0x00,
+    0xAA, 1, 0x05,
+    0xAB, 1, 0x02,
+    0xAC, 1, 0xDD,
+    0xAD, 1, 0x00,
+    0xAE, 1, 0x00,
+    0xAF, 1, 0x00,
+    0xB0, 1, 0x48,
+    0xB1, 1, 0x00,
+    0xB2, 1, 0x07,
+    0xB3, 1, 0x02,
+    0xB4, 1, 0xDF,
+    0xB5, 1, 0x00,
+    0xB6, 1, 0x00,
+    0xB7, 1, 0x00,
+    0xB8, 1, 0x48,
+    0xB9, 1, 0x00,
+    0xBA, 1, 0x09,
+    0xBB, 1, 0x02,
+    0xBC, 1, 0xE1,
+    0xBD, 1, 0x00,
+    0xBE, 1, 0x00,
+    0xBF, 1, 0x00,
+    0xC0, 1, 0x65,
+    0xC1, 1, 0x74,
+    0xC2, 1, 0x47,
+    0xC3, 1, 0x56,
+    0xC4, 1, 0xAA,
+    0xC5, 1, 0x11,
+    0xC6, 1, 0x00,
+    0xC7, 1, 0x2A,
+    0xC8, 1, 0xA2,
+    0xC9, 1, 0x33,
+    0xD0, 1, 0x65,
+    0xD1, 1, 0x74,
+    0xD2, 1, 0x47,
+    0xD3, 1, 0x56,
+    0xD4, 1, 0xAA,
+    0xD5, 1, 0x11,
+    0xD6, 1, 0x00,
+    0xD7, 1, 0x2A,
+    0xD8, 1, 0xA2,
+    0xD9, 1, 0x33,
+    0xF3, 1, 0x01,
+    0xF0, 1, 0x00,
+    0x4D, 1, 0x00,
+    0x4E, 1, 0x00,
+    0x4F, 1, 0x00,
+    0x4C, 0x81, 0x01, 10,
+    0x4C, 0x81, 0x00, 10,
+    0x3A, 1, 0x55,
+    0xF0, 1, 0x00,
+    0x2A, 4, 0x00, 0x00, 0x01, 0x67,
+    0x2B, 4, 0x00, 0x00, 0x01, 0x67,
+    0x21, 0,
+    0x11, 0x80, 120,
+    0x3A, 1, 0x55,
+    0x36, 1, 0x00,
+    0x29, 0x80, 20,
+};
+
+
+static constexpr uint32_t kSpiHz = 10 * 1000 * 1000;  // ample for 2 frames/s over jumper wires
+
+bool RoundPanel::init() {
+  pinMode(_p.rst, OUTPUT);
+  digitalWrite(_p.rst, HIGH);
+  delay(20);
+  digitalWrite(_p.rst, LOW);
+  delay(120);
+  digitalWrite(_p.rst, HIGH);
+  delay(120);
+
+  pinMode(_p.cs, OUTPUT);
+  digitalWrite(_p.cs, HIGH);
+
+  spi_bus_config_t bus = {};
+  bus.mosi_io_num = _p.io0;
+  bus.miso_io_num = _p.io1;
+  bus.quadwp_io_num = _p.io2;
+  bus.quadhd_io_num = _p.io3;
+  bus.sclk_io_num = _p.sclk;
+  bus.max_transfer_sz = kBandBytes;
+  bus.flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_QUAD;
+  if (spi_bus_initialize(_host, &bus, SPI_DMA_CH_AUTO) != ESP_OK) return false;
+
+  spi_device_interface_config_t dev = {};
+  dev.command_bits = 8;
+  dev.address_bits = 24;
+  dev.mode = 0;
+  dev.clock_speed_hz = kSpiHz;
+  dev.spics_io_num = -1;  // CS by hand: a frame must stay inside one CS-low burst
+  dev.queue_size = 1;
+  dev.flags = SPI_DEVICE_HALFDUPLEX;
+  if (spi_bus_add_device(_host, &dev, &_dev) != ESP_OK) return false;
+  // Bare-data device for the chunks after the first one (IDF 4.4 cannot drop the command and
+  // address phases per transaction). CS is ours, so both devices share the burst.
+  dev.command_bits = 0;
+  dev.address_bits = 0;
+  if (spi_bus_add_device(_host, &dev, &_devData) != ESP_OK) return false;
+
+  _band = (uint8_t*)heap_caps_malloc(kBandBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  if (!_band) return false;
+
+  const uint8_t* init = kInitSlmsim;
+  const size_t initLen = sizeof kInitSlmsim;
+  for (size_t i = 0; i < initLen;) {
+    uint8_t cmd = init[i++], n = init[i++];
+    bool wait = n & 0x80;
+    n &= 0x7F;
+    writeReg(cmd, &init[i], n);
+    i += n;
+    if (wait) delay(init[i] == 255 ? 500 : init[i]), ++i;
+  }
+
+  ledcSetup(_pwm, 5000, 8);
+  ledcAttachPin(_p.bl, _pwm);
+  return true;
+}
+
+void RoundPanel::setBrightness(uint8_t level) { ledcWrite(_pwm, level); }
+
+void RoundPanel::writeReg(uint8_t cmd, const uint8_t* data, size_t len) {
+  spi_transaction_t t = {};
+  t.cmd = 0x02;
+  t.addr = (uint32_t)cmd << 8;
+  t.length = len * 8;
+  if (len == 0) {
+    // No MOSI phase: IDF rejects a zero-length transfer that names a TX buffer or TXDATA.
+  } else if (len <= 4) {
+    t.flags = SPI_TRANS_USE_TXDATA;
+    memcpy(t.tx_data, data, len);
+  } else {
+    t.tx_buffer = data;
+  }
+  digitalWrite(_p.cs, LOW);
+  spi_device_polling_transmit(_dev, &t);
+  digitalWrite(_p.cs, HIGH);
+}
+
+void RoundPanel::setFullWindow() {
+  const uint8_t col[] = {0, 0, (PANEL_W - 1) >> 8, (PANEL_W - 1) & 0xFF};
+  const uint8_t row[] = {0, 0, (PANEL_H - 1) >> 8, (PANEL_H - 1) & 0xFF};
+  writeReg(0x2A, col, 4);
+  writeReg(0x2B, row, 4);
+}
+
+// Pixels as Slmsim's driver sends them: RAMWR (0x2C) as a plain command, then CS low for the
+// whole frame; the first chunk carries 0x32 + RAMWRC (0x3C) and the data on four lines, later
+// chunks are bare data. Separate CS bursts per chunk left this panel showing garbage.
+void RoundPanel::beginPixels() {
+  setFullWindow();
+  writeReg(0x2C);
+  digitalWrite(_p.cs, LOW);
+  _firstChunk = true;
+}
+
+void RoundPanel::writePixels(const uint8_t* data, size_t len) {
+  spi_transaction_t t = {};
+  t.flags = SPI_TRANS_MODE_QIO;
+  t.cmd = 0x32;
+  t.addr = 0x003C00;
+  t.tx_buffer = data;
+  t.length = len * 8;
+  spi_device_polling_transmit(_firstChunk ? _dev : _devData, &t);
+  _firstChunk = false;
+}
+
+void RoundPanel::endPixels() { digitalWrite(_p.cs, HIGH); }
+
+void RoundPanel::fill(uint16_t rgb565) {
+  if (!_band) return;
+  for (int i = 0; i < kBandBytes; i += 2) {
+    _band[i] = rgb565 >> 8;
+    _band[i + 1] = rgb565 & 0xFF;
+  }
+  const size_t total = PANEL_W * PANEL_H * 2;
+  beginPixels();
+  for (size_t off = 0; off < total; off += kBandBytes) writePixels(_band, min<size_t>(kBandBytes, total - off));
+  endPixels();
+}
+
+void RoundPanel::pushFrame(const uint16_t* px) {
+  if (!_band) return;
+  const auto* src = (const uint8_t*)px;
+  const size_t total = PANEL_W * PANEL_H * 2;
+  beginPixels();
+  for (size_t off = 0; off < total; off += kBandBytes) {
+    size_t n = min<size_t>(kBandBytes, total - off);
+    memcpy(_band, src + off, n);  // the frame is in PSRAM; DMA reads from internal RAM
+    writePixels(_band, n);
+  }
+  endPixels();
+}
+
+#endif

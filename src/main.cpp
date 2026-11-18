@@ -17,15 +17,33 @@ static constexpr int kFaces = ENABLE_PRINTER ? 2 : 1;
 #if HAS_PANELS
 #include "panels.h"
 static RoundPanel panel0(SPI2_HOST, PanelPins PANEL0_PINS, 6);
-static LGFX_Sprite frame0(&panel0);
+static LGFX_Sprite frame0;
 #if ENABLE_PRINTER
 static RoundPanel panel1(SPI3_HOST, PanelPins PANEL1_PINS, 7);
-static LGFX_Sprite frame1(&panel1);
+static LGFX_Sprite frame1;
 #endif
 #endif
 
 ClaudeUsage g_claude;
 PrinterState g_printer;
+
+#if HAS_PANELS
+// Sends a frame only when it changed since the last one (`prev` is a copy in PSRAM).
+static void pushFrame(RoundPanel& panel, LGFX_Sprite& frame, uint16_t*& prev) {
+  const auto* src = (const uint16_t*)frame.getBuffer();
+  if (!src) return;
+  bool full = !prev;
+  if (full) prev = (uint16_t*)ps_malloc(PANEL_W * PANEL_H * 2);
+  if (!prev) return;
+  if (!full && !memcmp(src, prev, PANEL_W * PANEL_H * 2)) return;
+  panel.pushFrame(src);
+  memcpy(prev, src, PANEL_W * PANEL_H * 2);
+}
+static uint16_t* prev0 = nullptr;
+#if ENABLE_PRINTER
+static uint16_t* prev1 = nullptr;
+#endif
+#endif
 
 static void renderFace(int index, LGFX_Sprite& s) {
   if (index == 0) ui::drawClaude(s, g_claude);
@@ -145,8 +163,8 @@ void setup() {
 #endif
   };
   for (auto& sc : screens) {
-    sc.panel->init();
-    sc.panel->fillScreen(TFT_BLACK);
+    if (!sc.panel->init()) Serial.println("[panel] init failed");
+    sc.panel->fill(0x0000);
     sc.frame->setColorDepth(16);
     sc.frame->setPsram(true);
     sc.frame->createSprite(PANEL_W, PANEL_H);
@@ -187,10 +205,10 @@ void loop() {
     lastRender = millis();
     applyBrightness();
     renderFace(0, frame0);
-    frame0.pushSprite(0, 0);
+    pushFrame(panel0, frame0, prev0);
 #if ENABLE_PRINTER
     renderFace(1, frame1);
-    frame1.pushSprite(0, 0);
+    pushFrame(panel1, frame1, prev1);
 #endif
   }
 #endif
