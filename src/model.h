@@ -1,28 +1,78 @@
 #pragma once
 #include <Arduino.h>
+#include <math.h>
+#include <time.h>
 
 struct UsageWindow {
   bool present = false;
-  float pct = 0;            // 0-100
-  int32_t resetsInS = -1;   // seconds until reset at fetch time, -1 = unknown
+  float pct = 0;        // 0-100
+  time_t resetsAt = 0;  // epoch seconds, 0 = unknown
+  char label[16] = "";  // display name for model-scoped windows ("Opus", "Fable", ...)
+
+  // Seconds until reset, -1 if unknown.
+  int32_t remaining() const {
+    time_t now = time(nullptr);
+    if (!resetsAt || now < 1700000000) return -1;
+    return resetsAt > now ? (int32_t)(resetsAt - now) : 0;
+  }
 };
+
+// Fixed-step history (one value per STEP_S seconds), oldest first. Gaps are NAN.
+template <int N, int STEP_S>
+struct Series {
+  float v[N];
+  int count = 0, head = 0;  // head = next write position
+  uint32_t lastSlot = 0;
+
+  void add(time_t t, float x) {
+    uint32_t slot = t / STEP_S;
+    if (count && slot == lastSlot) {
+      v[(head + N - 1) % N] = x;
+      return;
+    }
+    if (count && slot > lastSlot) {
+      for (uint32_t g = min<uint32_t>(slot - lastSlot - 1, N); g > 0; --g) push(NAN);
+    }
+    push(x);
+    lastSlot = slot;
+  }
+  float at(int i) const { return v[(head - count + i + N) % N]; }  // 0 = oldest
+
+ private:
+  void push(float x) {
+    v[head] = x;
+    head = (head + 1) % N;
+    if (count < N) ++count;
+  }
+};
+
+static constexpr int kMaxScoped = 3;
 
 struct ClaudeUsage {
   bool valid = false;
-  UsageWindow session;      // 5-hour window
-  UsageWindow week;         // 7-day window
-  UsageWindow weekOpus;     // 7-day Opus window (if plan has one)
-  uint64_t todayTokens = 0;
-  uint64_t todayOutputTokens = 0;
-  uint32_t fetchedAtMs = 0;
-  String error;
+  bool loggedIn = false;
+  UsageWindow session;               // 5-hour window
+  UsageWindow week;                  // 7-day window, all models
+  UsageWindow scoped[kMaxScoped];    // model-scoped weekly caps, when the plan reports them
+  int scopedCount = 0;
 
-  // Seconds left on a window, adjusted for time since fetch.
-  int32_t remaining(const UsageWindow& w) const {
-    if (w.resetsInS < 0) return -1;
-    int32_t left = w.resetsInS - (int32_t)((millis() - fetchedAtMs) / 1000);
-    return left < 0 ? 0 : left;
-  }
+  // Burn rate, from recent polls. -1 / NAN when there is not enough data.
+  float sessionRatePerH = NAN;      // percentage points per hour
+  int32_t sessionToLimitS = -1;     // seconds until 100% at the current rate
+  float weekProjectedPct = NAN;     // where the week ends up at the current daily rate
+  bool spike = false;               // >= 5 points in the last ~5 minutes
+
+  Series<288, 300> sessionHist;     // 24h of 5-minute samples
+  Series<168, 3600> weekHist;       // 7 days of hourly samples
+
+  // Optional bridge (Claude Code transcripts on a computer)
+  bool bridgeOk = false;
+  uint64_t todayTokens = 0;
+  uint32_t tokPerMin = 0;
+
+  time_t fetchedAt = 0;             // last successful usage fetch (epoch)
+  uint32_t nextPollInS = 0;
+  String error;
 };
 
 struct PrinterState {

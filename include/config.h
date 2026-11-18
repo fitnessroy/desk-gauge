@@ -8,6 +8,28 @@
 
 #define HOSTNAME "desk-gauge"
 
+// Web page login (set WEB_USER / WEB_PASS in secrets.h)
+#ifndef WEB_USER
+#define WEB_USER "admin"
+#endif
+#ifndef WEB_PASS
+#error "Set WEB_PASS in include/secrets.h - the password for the gauge's web page"
+#endif
+#define WEB_MAX_FAILS  5        // wrong logins in a row before the page locks
+#define WEB_LOCKOUT_MS 60000
+
+// Local time zone (POSIX TZ string), used for reset clock times. Default: Europe/Oslo.
+#ifndef TIMEZONE
+#define TIMEZONE "CET-1CEST,M3.5.0,M10.5.0/3"
+#endif
+
+// The printer screen is only built when the printer is configured in secrets.h.
+#ifdef BAMBU_IP
+#define ENABLE_PRINTER 1
+#else
+#define ENABLE_PRINTER 0
+#endif
+
 // Native panel resolution. The S3 build sets 360x360 for the ST77916 panels; the
 // no-screen preview build keeps 240x240 to fit in heap. The UI scales from this.
 #ifndef PANEL_W
@@ -17,12 +39,31 @@
 #define PANEL_H 240
 #endif
 
-// Polling / refresh
-#define CLAUDE_POLL_MS      60000
+// Claude usage polling. The interval is set on the web page (stored in flash); this is the default.
+#define CLAUDE_POLL_DEFAULT_S 300
+#define CLAUDE_POLL_MIN_S     120  // the usage endpoint answers 429 at 60 s
+#define CLAUDE_POLL_MAX_S     3600
+#define CLAUDE_BACKOFF_MAX_S  300   // on 429 / errors the interval doubles up to this
+#define BRIDGE_POLL_MS        30000 // optional token bridge (secrets.h CLAUDE_BRIDGE_URL)
+
+// Claude login. The device does its own OAuth login (PKCE, manual code paste) with Claude Code's
+// public client, keeps its own refresh token in flash and refreshes it by itself.
+// These are the values Claude Code uses; the usage endpoint is undocumented and may change.
+#define CLAUDE_OAUTH_CLIENT_ID    "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+#define CLAUDE_OAUTH_AUTHORIZE    "https://claude.com/cai/oauth/authorize"
+#define CLAUDE_OAUTH_TOKEN        "https://platform.claude.com/v1/oauth/token"
+#define CLAUDE_OAUTH_REDIRECT     "https://platform.claude.com/oauth/code/callback"
+#define CLAUDE_OAUTH_SCOPES       "user:profile user:inference"
+#define CLAUDE_USAGE_URL          "https://api.anthropic.com/api/oauth/usage"
+#define CLAUDE_OAUTH_BETA         "oauth-2025-04-20"
+
+// Refresh / render
 #define BAMBU_RECONNECT_MS  10000
 #define BAMBU_STALE_MS      60000   // no report for this long -> treat as offline
 #define RENDER_MS           500
+#define FACE_ROTATE_MS      10000   // "rotate" face mode: switch between rings and bars
 #define SERIAL_LOG_MS       10000
+#define WIFI_RETRY_MS       20000   // rescan for a known network this often while offline
 
 // Set to 1 to dump every raw printer MQTT report to serial (useful for new models like the P2S)
 #define BAMBU_DUMP_RAW 0

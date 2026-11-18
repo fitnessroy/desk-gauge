@@ -8,6 +8,7 @@
 #include "config.h"
 #include "model.h"
 
+#if ENABLE_PRINTER
 namespace bambu_source {
 
 static WiFiClientSecure tls;
@@ -96,3 +97,4 @@ void loop() {
 }
 
 }  // namespace bambu_source
+#endif  // ENABLE_PRINTER

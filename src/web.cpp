@@ -3,31 +3,108 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 
+#include "claude_auth.h"
+#include "claude_source.h"
 #include "config.h"
 #include "model.h"
+#include "settings.h"
+#include "ui.h"
 
 namespace web {
 
 static WebServer server(80);
 static RenderFn renderFace;
+static int faces = 1;
 
 static const char kIndex[] PROGMEM = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Desk Gauge</title>
 <style>
-body{background:#111;color:#ccc;font-family:system-ui,sans-serif;display:flex;flex-direction:column;
-align-items:center;gap:16px;padding:24px;margin:0}
+:root{color-scheme:dark}
+body{background:#111;color:#ccc;font:15px system-ui,sans-serif;display:flex;flex-direction:column;
+align-items:center;gap:20px;padding:24px 16px;margin:0}
 .row{display:flex;gap:32px;flex-wrap:wrap;justify-content:center}
 img{width:240px;height:240px;border-radius:50%;box-shadow:0 0 0 10px #222,0 0 30px #000}
+section{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:16px 18px;width:100%;max-width:440px;box-sizing:border-box}
+h2{margin:0 0 10px;font-size:15px;color:#d97757}
+label{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:8px 0}
+input,select,button{font:inherit;background:#222;color:#eee;border:1px solid #333;border-radius:8px;padding:6px 10px}
+button{cursor:pointer;background:#d97757;border-color:#d97757;color:#111;font-weight:600}
+button.ghost{background:#222;color:#ccc;border-color:#333}
+input[type=text]{width:100%;box-sizing:border-box}
+.muted{color:#888;font-size:13px} .err{color:#eb5046} .ok{color:#6ec878}
+a{color:#d97757}
 </style></head><body>
-<div class="row"><img id="f0" src="/screen/0.bmp"><img id="f1" src="/screen/1.bmp"></div>
-<small><a style="color:#888" href="/state.json">state.json</a></small>
+<div class="row" id="faces"></div>
+
+<section>
+<h2>Claude</h2>
+<div id="status" class="muted">...</div>
+<div id="signedout" hidden>
+  <p class="muted">The gauge signs in to your Claude account by itself. This is separate from Claude Code
+  on your computer, so it never logs that out.</p>
+  <p><button onclick="startLogin()">1. Open Claude sign-in</button></p>
+  <p class="muted">2. Approve, then copy the code Claude shows you and paste it here:</p>
+  <p><input type="text" id="code" placeholder="paste code#state"></p>
+  <p><button onclick="finishLogin()">3. Connect</button> <span id="loginmsg"></span></p>
+</div>
+<div id="signedin" hidden>
+  <p><button class="ghost" onclick="post('/poll').then(load)">Refresh now</button>
+  <button class="ghost" onclick="if(confirm('Sign the gauge out?'))post('/logout').then(load)">Sign out</button></p>
+</div>
+</section>
+
+<section>
+<h2>Settings</h2>
+<label>Poll every <span><input type="number" id="poll" min="120" max="3600" style="width:80px"> s</span></label>
+<label>Face <select id="face"><option value="0">Rings</option><option value="1">Bars</option><option value="2">Rotate</option></select></label>
+<label>Theme <select id="theme"></select></label>
+<label>Brightness <input type="range" id="bright" min="10" max="255"></label>
+<p><button onclick="save()">Save</button> <span id="savemsg" class="muted"></span></p>
+</section>
+
+<small><a href="/state.json">state.json</a></small>
 <script>
+const $=id=>document.getElementById(id);
+const post=(u,body)=>fetch(u,{method:'POST',headers:{'X-Gauge':'1'},body:body?new URLSearchParams(body):undefined});
+let FACES=1;
+function fmt(s){if(s<0)return'--';const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;return d?d+'d '+h+'h':h?h+'h '+m+'m':m+'m'}
+async function load(first){
+  const st=await (await fetch('/state.json')).json(), c=st.claude;
+  if(first){
+    FACES=st.faces;
+    $('faces').innerHTML=[...Array(FACES).keys()].map(i=>`<img id="f${i}" src="/screen/${i}.bmp">`).join('');
+    $('theme').innerHTML=st.themes.map((t,i)=>`<option value="${i}">${t}</option>`).join('');
+    $('poll').value=st.settings.poll_s;$('face').value=st.settings.face;
+    $('theme').value=st.settings.theme;$('bright').value=st.settings.brightness;
+  }
+  $('signedout').hidden=c.logged_in;$('signedin').hidden=!c.logged_in;
+  let s=c.logged_in?(c.valid?`<span class="ok">Signed in</span> · session ${Math.round(c.session.pct)}% · week ${Math.round(c.week.pct)}%`:'Signed in, waiting for data')
+                  :'<span class="err">Not signed in</span>';
+  if(c.logged_in)s+=` · next poll in ${c.next_poll_s}s`;
+  if(c.error&&c.logged_in)s+=`<br><span class="err">${c.error}</span>`;
+  $('status').innerHTML=s;
+}
+async function startLogin(){
+  const w=window.open('about:blank');
+  const r=await (await post('/login/start')).json();
+  if(w)w.location=r.url;else location.href=r.url;
+}
+async function finishLogin(){
+  $('loginmsg').textContent='connecting...';
+  const r=await (await post('/login/finish',{code:$('code').value})).json();
+  $('loginmsg').innerHTML=r.ok?'<span class="ok">connected</span>':`<span class="err">${r.error}</span>`;
+  load();
+}
+async function save(){
+  await post('/settings',{poll:$('poll').value,face:$('face').value,theme:$('theme').value,bright:$('bright').value});
+  $('savemsg').textContent='saved';setTimeout(()=>$('savemsg').textContent='',1500);
+}
 // Reload faces one at a time; the ESP renders on demand.
-async function tick(){for(const i of [0,1]){await new Promise(r=>{const n=new Image();
-n.onload=n.onerror=()=>{document.getElementById('f'+i).src=n.src;r()};n.src='/screen/'+i+'.bmp?t='+Date.now()})}
+async function tick(){for(let i=0;i<FACES;i++){await new Promise(r=>{const n=new Image();
+n.onload=n.onerror=()=>{const el=$('f'+i);if(el)el.src=n.src;r()};n.src='/screen/'+i+'.bmp?t='+Date.now()})}
 setTimeout(tick,1500)}
-tick();
+load(true).then(tick);setInterval(load,5000);
 </script></body></html>)HTML";
 
 static void handleScreen(int index) {
@@ -70,17 +147,36 @@ static void handleScreen(int index) {
   free(row);
 }
 
+static void putWindow(JsonObject o, const UsageWindow& w) {
+  o["pct"] = w.pct;
+  o["resets_in"] = w.remaining();
+  o["resets_at"] = (long)w.resetsAt;
+  if (w.label[0]) o["label"] = w.label;
+}
+
 static void handleState() {
   JsonDocument doc;
+  const ClaudeUsage& cu = g_claude;
   JsonObject c = doc["claude"].to<JsonObject>();
-  c["valid"] = g_claude.valid;
-  c["session_pct"] = g_claude.session.pct;
-  c["session_resets_in"] = g_claude.remaining(g_claude.session);
-  c["week_pct"] = g_claude.week.pct;
-  c["week_resets_in"] = g_claude.remaining(g_claude.week);
-  c["today_tokens"] = g_claude.todayTokens;
-  c["error"] = g_claude.error;
+  c["logged_in"] = cu.loggedIn;
+  c["valid"] = cu.valid;
+  putWindow(c["session"].to<JsonObject>(), cu.session);
+  putWindow(c["week"].to<JsonObject>(), cu.week);
+  JsonArray sc = c["scoped"].to<JsonArray>();
+  for (int i = 0; i < cu.scopedCount; ++i) putWindow(sc.add<JsonObject>(), cu.scoped[i]);
+  if (!isnan(cu.sessionRatePerH)) c["session_rate_per_h"] = cu.sessionRatePerH;
+  c["session_to_limit_s"] = cu.sessionToLimitS;
+  if (!isnan(cu.weekProjectedPct)) c["week_projected_pct"] = cu.weekProjectedPct;
+  c["spike"] = cu.spike;
+  c["fetched_at"] = (long)cu.fetchedAt;
+  c["next_poll_s"] = cu.nextPollInS;
+  c["error"] = cu.error;
+  if (cu.bridgeOk) {
+    c["today_tokens"] = cu.todayTokens;
+    c["tok_per_min"] = cu.tokPerMin;
+  }
 
+#if ENABLE_PRINTER
   JsonObject p = doc["printer"].to<JsonObject>();
   p["online"] = g_printer.online;
   p["state"] = g_printer.gcodeState;
@@ -93,7 +189,16 @@ static void handleState() {
   p["bed"] = g_printer.bed;
   p["chamber"] = g_printer.chamber;
   p["print_error"] = g_printer.printError;
+#endif
 
+  JsonObject s = doc["settings"].to<JsonObject>();
+  s["poll_s"] = g_settings.pollS;
+  s["face"] = (int)g_settings.face;
+  s["theme"] = g_settings.theme;
+  s["brightness"] = g_settings.brightness;
+  JsonArray themes = doc["themes"].to<JsonArray>();
+  for (int i = 0; i < ui::themeCount(); ++i) themes.add(ui::themeName(i));
+  doc["faces"] = faces;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["uptime_s"] = millis() / 1000;
 
@@ -102,12 +207,94 @@ static void handleState() {
   server.send(200, "application/json", out);
 }
 
-void begin(RenderFn render) {
+static void sendJson(JsonDocument& doc) {
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+static void handleLoginStart() {
+  JsonDocument doc;
+  doc["url"] = claude_auth::startLogin();
+  sendJson(doc);
+}
+
+static void handleLoginFinish() {
+  JsonDocument doc;
+  String err;
+  doc["ok"] = claude_auth::finishLogin(server.arg("code"), err);
+  if (doc["ok"]) claude_source::pollNow();
+  else doc["error"] = err;
+  sendJson(doc);
+}
+
+static void handleSettings() {
+  if (server.hasArg("poll")) g_settings.pollS = constrain(server.arg("poll").toInt(), CLAUDE_POLL_MIN_S, CLAUDE_POLL_MAX_S);
+  if (server.hasArg("face")) g_settings.face = (FaceMode)constrain(server.arg("face").toInt(), 0, 2);
+  if (server.hasArg("theme")) g_settings.theme = constrain(server.arg("theme").toInt(), 0, ui::themeCount() - 1);
+  if (server.hasArg("bright")) g_settings.brightness = constrain(server.arg("bright").toInt(), 10, 255);
+  settings::save();
+  server.send(204);
+}
+
+// Every page needs the web login from secrets.h (HTTP Basic). After WEB_MAX_FAILS wrong
+// attempts in a row the page refuses all requests for WEB_LOCKOUT_MS.
+static uint8_t failedLogins = 0;
+static uint32_t lockedUntil = 0;
+
+static bool authorized() {
+  if (lockedUntil && (int32_t)(millis() - lockedUntil) < 0) {
+    server.send(429, "text/plain", "Too many wrong logins, try again in a minute");
+    return false;
+  }
+  lockedUntil = 0;
+  if (server.authenticate(WEB_USER, WEB_PASS)) {
+    failedLogins = 0;
+    return true;
+  }
+  if (server.hasHeader("Authorization") && ++failedLogins >= WEB_MAX_FAILS) {
+    failedLogins = 0;
+    lockedUntil = millis() + WEB_LOCKOUT_MS;
+    Serial.println("[web] too many wrong logins, locked");
+  }
+  server.requestAuthentication(BASIC_AUTH, HOSTNAME);
+  return false;
+}
+
+// Changes also need the page's own X-Gauge header, which a form on another site cannot send.
+static WebServer::THandlerFunction guarded(WebServer::THandlerFunction fn, bool change = false) {
+  return [fn, change] {
+    if (!authorized()) return;
+    if (change && server.header("X-Gauge") != "1") {
+      server.send(403, "text/plain", "Forbidden");
+      return;
+    }
+    fn();
+  };
+}
+
+void begin(RenderFn render, int faceCount) {
   renderFace = render;
-  server.on("/", [] { server.send_P(200, "text/html", kIndex); });
-  server.on("/screen/0.bmp", [] { handleScreen(0); });
-  server.on("/screen/1.bmp", [] { handleScreen(1); });
-  server.on("/state.json", handleState);
+  faces = faceCount;
+  static const char* kHeaders[] = {"Authorization", "X-Gauge"};
+  server.collectHeaders(kHeaders, 2);
+  server.on("/", guarded([] { server.send_P(200, "text/html", kIndex); }));
+  server.on("/screen/0.bmp", guarded([] { handleScreen(0); }));
+  server.on("/screen/1.bmp", guarded([] { handleScreen(min(1, faces - 1)); }));
+  server.on("/state.json", guarded(handleState));
+  server.on("/login/start", HTTP_POST, guarded(handleLoginStart, true));
+  server.on("/login/finish", HTTP_POST, guarded(handleLoginFinish, true));
+  server.on("/logout", HTTP_POST, guarded([] {
+    claude_auth::logout();
+    g_claude.valid = false;
+    server.send(204);
+  }, true));
+  server.on("/poll", HTTP_POST, guarded([] {
+    claude_source::pollNow();
+    server.send(204);
+  }, true));
+  server.on("/settings", HTTP_POST, guarded(handleSettings, true));
+  server.onNotFound(guarded([] { server.send(404, "text/plain", "Not found"); }));
   server.begin();
 }
 

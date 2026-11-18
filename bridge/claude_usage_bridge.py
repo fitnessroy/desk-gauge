@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Claude usage bridge for desk-gauge.
+"""Optional Claude token bridge for desk-gauge.
 
-Serves a small JSON document at http://<host>:8787/claude.json for the ESP32:
+The gauge reads plan limits from Anthropic by itself. This bridge only adds what lives on your
+computer: today's Claude Code token count and the live tokens/min badge. It serves
+http://<host>:8787/claude.json (plan limits are included too, for other uses):
 
     {
       "session":   {"pct": 42.0, "resets_in": 7980},   # 5-hour window
@@ -9,6 +11,7 @@ Serves a small JSON document at http://<host>:8787/claude.json for the ESP32:
       "week_opus": {"pct": 3.0,  "resets_in": 401234} | null,
       "today_tokens": 12345678,          # all Claude Code tokens since local midnight
       "today_output_tokens": 234567,
+      "tok_per_min": 5300,               # input+output+cache writes, last 5 minutes
       "error": null
     }
 
@@ -36,7 +39,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-CACHE_S = 60
+CACHE_S = 30
+RECENT_S = 300  # window for tok_per_min
 PROJECTS_DIR = os.path.expanduser(os.environ.get("CLAUDE_PROJECTS_DIR", "~/.claude/projects"))
 
 
@@ -90,8 +94,9 @@ def fetch_limits():
 def tokens_today():
     midnight = dt.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     cutoff = midnight.timestamp()
+    recent_cutoff = time.time() - RECENT_S
     seen = set()
-    total = output = 0
+    total = output = recent = 0
     for path in glob.iglob(os.path.join(PROJECTS_DIR, "**", "*.jsonl"), recursive=True):
         try:
             if os.path.getmtime(path) < cutoff:
@@ -109,7 +114,8 @@ def tokens_today():
                     ts = entry.get("timestamp")
                     if not usage or not ts:
                         continue
-                    if dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() < cutoff:
+                    when = dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                    if when < cutoff:
                         continue
                     # Streaming writes the same message several times; count it once.
                     key = (msg.get("id"), entry.get("requestId"))
@@ -117,12 +123,14 @@ def tokens_today():
                         continue
                     seen.add(key)
                     out = usage.get("output_tokens", 0) or 0
+                    written = out + sum(usage.get(k, 0) or 0 for k in ("input_tokens", "cache_creation_input_tokens"))
                     output += out
-                    total += out + sum(usage.get(k, 0) or 0 for k in (
-                        "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+                    total += written + (usage.get("cache_read_input_tokens", 0) or 0)
+                    if when >= recent_cutoff:
+                        recent += written
         except OSError:
             continue
-    return total, output
+    return total, output, round(recent * 60 / RECENT_S)
 
 
 class State:
@@ -139,7 +147,7 @@ def build_payload():
         payload["error"] = f"usage HTTP {e.code}" + (" (open Claude Code to refresh login)" if e.code == 401 else "")
     except Exception as e:  # noqa: BLE001 - report anything to the device
         payload["error"] = f"usage: {e}"
-    payload["today_tokens"], payload["today_output_tokens"] = tokens_today()
+    payload["today_tokens"], payload["today_output_tokens"], payload["tok_per_min"] = tokens_today()
     return payload
 
 
