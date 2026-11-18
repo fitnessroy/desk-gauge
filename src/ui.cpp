@@ -241,6 +241,13 @@ static void wifiLine(Ctx& g, float y) {
   text(g, name, x + 12, y, 12, col, textdatum_t::middle_left);
 }
 
+// Current local time, once NTP has set the clock.
+static void clockText(Ctx& g, float y, float size) {
+  time_t now = time(nullptr);
+  if (now < 1700000000) return;
+  text(g, fmtClock(now), 120, y, size, g.t.text);
+}
+
 // Not signed in / no data yet: empty rings and instructions.
 static bool drawStatus(Ctx& g, const ClaudeUsage& c) {
   if (c.valid) return false;
@@ -284,6 +291,7 @@ static void drawRings(Ctx& g, const ClaudeUsage& c) {
   // Below the inner ring ends the bottom gap is wider, so the alert line and 5h sparkline sit there.
   statusLine(g, c, sc ? 194 : 182);
   sparkline(g, c.sessionHist, 60, 88, sc ? 206 : 200, 64, 14, usageColor(t, c.session.pct, t.session));
+  clockText(g, 222, 12);
 }
 
 static void barRow(Ctx& g, const char* label, const UsageWindow& w, float windowS, uint16_t col, float y) {
@@ -316,6 +324,7 @@ static void drawBars(Ctx& g, const ClaudeUsage& c) {
   sparkline(g, c.sessionHist, 288, 66, sy, 134, 18, t.session);
 
   statusLine(g, c, sy + 34);
+  clockText(g, 190, 18);
   text(g, "reset " + fmtClock(c.session.resetsAt), 120, 214, 12, t.dim);
 }
 
