@@ -2,7 +2,6 @@
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
-#include <WiFiMulti.h>
 
 #include "bambu_source.h"
 #include "claude_auth.h"
@@ -33,38 +32,74 @@ static void renderFace(int index, LGFX_Sprite& s) {
   else ui::drawPrinter(s, g_printer);
 }
 
-// Joins whichever configured network is in range (strongest first); WIFI_SSID2 is optional.
-static WiFiMulti wifiMulti;
+// Networks in priority order: WIFI_SSID first, WIFI_SSID2 only while the first is not in range.
+struct WifiNet {
+  const char* ssid;
+  const char* pass;
+};
+static const WifiNet kNets[] = {
+    {WIFI_SSID, WIFI_PASS},
+#ifdef WIFI_SSID2
+    {WIFI_SSID2, WIFI_PASS2},
+#endif
+};
+static constexpr int kNetCount = sizeof kNets / sizeof kNets[0];
+
+// Index of the highest-priority network in range, -1 if none, -2 if the scan failed.
+static int bestNetworkInRange() {
+  int n = WiFi.scanNetworks();
+  if (n < 0) return -2;
+  int best = -1;
+  for (int i = 0; i < n; ++i)
+    for (int k = 0; k < kNetCount; ++k)
+      if (WiFi.SSID(i) == kNets[k].ssid && (best < 0 || k < best)) best = k;
+  WiFi.scanDelete();
+  return best;
+}
+
+static bool joinNetwork(int k, uint32_t timeoutMs) {
+  Serial.printf("[wifi] connecting to %s\n", kNets[k].ssid);
+  WiFi.disconnect();
+  WiFi.begin(kNets[k].ssid, kNets[k].pass);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) delay(100);
+  if (WiFi.status() != WL_CONNECTED) return false;
+  Serial.printf("[wifi] %s, ip %s  ->  http://%s.local/\n", WiFi.SSID().c_str(),
+                WiFi.localIP().toString().c_str(), HOSTNAME);
+  return true;
+}
+
+// Joins the best network in range, falling back down the list if joining fails.
+static bool joinBest(uint32_t timeoutMs) {
+  int best = bestNetworkInRange();
+  if (best == -1) return false;
+  for (int k = best < 0 ? 0 : best; k < kNetCount; ++k)
+    if (joinNetwork(k, timeoutMs)) return true;
+  return false;
+}
 
 static void connectWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
   WiFi.setAutoReconnect(true);
-  wifiMulti.addAP(WIFI_SSID, WIFI_PASS);
-#ifdef WIFI_SSID2
-  wifiMulti.addAP(WIFI_SSID2, WIFI_PASS2);
-  Serial.printf("[wifi] connecting to %s or %s\n", WIFI_SSID, WIFI_SSID2);
-#else
-  Serial.printf("[wifi] connecting to %s\n", WIFI_SSID);
-#endif
-  for (int i = 0; i < 3 && wifiMulti.run(8000) != WL_CONNECTED; ++i) {
+  for (int i = 0; i < 3 && !joinBest(10000); ++i) {
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[wifi] %s, ip %s  ->  http://%s.local/\n", WiFi.SSID().c_str(),
-                  WiFi.localIP().toString().c_str(), HOSTNAME);
-  } else {
-    Serial.println("[wifi] not connected yet, will keep retrying");
-  }
+  if (WiFi.status() != WL_CONNECTED) Serial.println("[wifi] not connected yet, will keep retrying");
 }
 
-// While disconnected, rescan now and then so the gauge can fall back to the other network.
+// While offline, rescan every WIFI_RETRY_MS. While on a fallback network, look for the first
+// network every WIFI_PREFER_MS and move back to it once it is in range.
 static void maintainWifi() {
-  static uint32_t lastTry = 0;
-  if (WiFi.status() == WL_CONNECTED || millis() - lastTry < WIFI_RETRY_MS) return;
-  lastTry = millis();
-  if (wifiMulti.run(5000) == WL_CONNECTED) {
-    Serial.printf("[wifi] reconnected to %s, ip %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+  static uint32_t lastTry = 0, lastPreferCheck = 0;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (millis() - lastTry < WIFI_RETRY_MS) return;
+    lastTry = millis();
+    joinBest(8000);
+    return;
   }
+  if (kNetCount < 2 || WiFi.SSID() == kNets[0].ssid || millis() - lastPreferCheck < WIFI_PREFER_MS) return;
+  lastPreferCheck = millis();
+  if (bestNetworkInRange() == 0 && !joinNetwork(0, 10000)) joinBest(8000);
 }
 
 static void logState() {

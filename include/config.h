@@ -64,6 +64,7 @@
 #define FACE_ROTATE_MS      10000   // "rotate" face mode: switch between rings and bars
 #define SERIAL_LOG_MS       10000
 #define WIFI_RETRY_MS       20000   // rescan for a known network this often while offline
+#define WIFI_PREFER_MS      180000  // on WIFI_SSID2, check this often whether WIFI_SSID is back
 
 // Set to 1 to dump every raw printer MQTT report to serial (useful for new models like the P2S)
 #define BAMBU_DUMP_RAW 0

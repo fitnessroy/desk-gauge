@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include <WiFi.h>
+
 #include "config.h"
 #include "settings.h"
 
@@ -224,6 +226,21 @@ static void liveBadge(Ctx& g, const ClaudeUsage& c, float y) {
   text(g, s, 124, y, 12, g.t.ok);
 }
 
+// Connected network name with a small signal icon, or "no Wi-Fi" in the warning colour.
+static void wifiLine(Ctx& g, float y) {
+  bool up = WiFi.status() == WL_CONNECTED;
+  String name = up ? WiFi.SSID() : String("no Wi-Fi");
+  if (name.length() > 16) name = name.substring(0, 15) + "..";
+  uint16_t col = up ? g.t.dim : g.t.warn;
+  g.s.setFont(font(12 * g.k));
+  float x = 120 - (g.s.textWidth(name) / g.k + 12) / 2;
+  int cx = g.X(x + 4), cy = g.X(y + 4);
+  g.s.fillCircle(cx, cy, max(1, g.X(1)), col);
+  g.s.fillArc(cx, cy, g.X(3.5), g.X(4.5), 225, 315, col);
+  g.s.fillArc(cx, cy, g.X(6.5), g.X(7.5), 225, 315, col);
+  text(g, name, x + 12, y, 12, col, textdatum_t::middle_left);
+}
+
 // Not signed in / no data yet: empty rings and instructions.
 static bool drawStatus(Ctx& g, const ClaudeUsage& c) {
   if (c.valid) return false;
@@ -237,6 +254,7 @@ static bool drawStatus(Ctx& g, const ClaudeUsage& c) {
     text(g, "loading", 120, 112, 18, g.t.dim);
   }
   if (c.error.length() && c.loggedIn) text(g, c.error.substring(0, 24), 120, 160, 12, g.t.bad);
+  wifiLine(g, 184);
   return true;
 }
 
@@ -249,6 +267,7 @@ static void drawRings(Ctx& g, const ClaudeUsage& c) {
   if (sc) ring(g, 83, 88, sc->pct, usageColor(t, sc->pct, t.scoped), -1);
 
   if (c.tokPerMin > 0) liveBadge(g, c, 58);
+  else wifiLine(g, 52);
   text(g, "SESSION", 120, 74, 12, t.dim);
   text(g, pctStr(c.session.pct), 120, 104, 48, usageColor(t, c.session.pct, t.text));
   text(g, "resets " + fmtDuration(c.session.remaining()), 120, 134, 12, t.dim);
@@ -276,10 +295,11 @@ static void barRow(Ctx& g, const char* label, const UsageWindow& w, float window
 
 static void drawBars(Ctx& g, const ClaudeUsage& c) {
   const Theme& t = g.t;
-  text(g, "CLAUDE", 120, 32, 12, t.session);
-  if (c.tokPerMin > 0) liveBadge(g, c, 46);
+  text(g, "CLAUDE", 120, 28, 12, t.session);
+  if (c.tokPerMin > 0) liveBadge(g, c, 42);
+  else wifiLine(g, 42);
 
-  float y = 62;
+  float y = 70;
   barRow(g, "Session", c.session, 5 * 3600, t.session, y);
   barRow(g, "Week", c.week, 7 * 86400, t.week, y += 30);
   for (int i = 0; i < c.scopedCount && i < 2; ++i) barRow(g, c.scoped[i].label, c.scoped[i], 7 * 86400, t.scoped, y += 30);
