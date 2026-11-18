@@ -3,3 +3,4 @@
 include/secrets.h
 __pycache__/
 .DS_Store
+pictures/
