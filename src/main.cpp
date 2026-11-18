@@ -133,6 +133,7 @@ void setup() {
   Serial.println("\n=== desk-gauge ===");
   settings::load();
   claude_auth::begin();
+  claude_source::begin();
 
 #if HAS_PANELS
   struct {
@@ -182,7 +183,7 @@ void loop() {
 
 #if HAS_PANELS
   static uint32_t lastRender = 0;
-  if (millis() - lastRender >= RENDER_MS) {
+  if (millis() - lastRender >= (g_claude.valid ? RENDER_MS : RENDER_ANIM_MS)) {
     lastRender = millis();
     applyBrightness();
     renderFace(0, frame0);

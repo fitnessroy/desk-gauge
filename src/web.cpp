@@ -286,7 +286,7 @@ void begin(RenderFn render, int faceCount) {
   server.on("/login/finish", HTTP_POST, guarded(handleLoginFinish, true));
   server.on("/logout", HTTP_POST, guarded([] {
     claude_auth::logout();
-    g_claude.valid = false;
+    claude_source::forget();
     server.send(204);
   }, true));
   server.on("/poll", HTTP_POST, guarded([] {

@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <WiFi.h>
 
 #include "claude_auth.h"
@@ -24,6 +25,51 @@ static Sample recent[64];
 static int recentCount = 0;
 
 void pollNow() { nextPollMs = millis(); }
+
+// The last good reading is kept in flash, so a restart shows it at once instead of "loading"
+// and waits out the poll interval before fetching again (restarts in a row otherwise hit 429).
+struct Cached {
+  uint8_t version;
+  UsageWindow session, week, scoped[kMaxScoped];
+  int8_t scopedCount;
+  time_t fetchedAt;
+};
+static constexpr uint8_t kCacheVersion = 1;
+static bool restored = false;
+
+static void saveCache(const ClaudeUsage& c) {
+  Cached k{kCacheVersion, c.session, c.week, {}, (int8_t)c.scopedCount, c.fetchedAt};
+  for (int i = 0; i < c.scopedCount; ++i) k.scoped[i] = c.scoped[i];
+  Preferences p;
+  p.begin("usage", false);
+  p.putBytes("last", &k, sizeof k);
+  p.end();
+}
+
+void begin() {
+  Cached k;
+  Preferences p;
+  p.begin("usage", true);
+  size_t n = p.getBytes("last", &k, sizeof k);
+  p.end();
+  if (n != sizeof k || k.version != kCacheVersion || !claude_auth::loggedIn()) return;
+  ClaudeUsage& c = g_claude;
+  c.session = k.session;
+  c.week = k.week;
+  c.scopedCount = constrain(k.scopedCount, 0, kMaxScoped);
+  for (int i = 0; i < c.scopedCount; ++i) c.scoped[i] = k.scoped[i];
+  c.fetchedAt = k.fetchedAt;
+  c.valid = c.session.present || c.week.present;
+  restored = c.valid;
+}
+
+void forget() {
+  Preferences p;
+  p.begin("usage", false);
+  p.clear();
+  p.end();
+  g_claude.valid = false;
+}
 
 static int daysFromCivil(int y, int m, int d) {
   y -= m <= 2;
@@ -165,7 +211,10 @@ static bool fetchUsage(uint32_t& retryAfterS) {
     c.valid = c.session.present || c.week.present;
     c.fetchedAt = time(nullptr);
     c.error = "";
-    if (c.valid) updateTrends(c);
+    if (c.valid) {
+      updateTrends(c);
+      saveCache(c);
+    }
     return true;
   }
   return false;
@@ -207,7 +256,17 @@ void loop() {
 #ifdef CLAUDE_BRIDGE_URL
   pollBridge();
 #endif
-  if (!net::clockSet() || wait > 0) return;
+  if (!net::clockSet()) return;
+  if (restored) {
+    // First poll after a restart: wait until the cached reading is one poll interval old.
+    restored = false;
+    int64_t age = (int64_t)time(nullptr) - g_claude.fetchedAt;
+    if (age >= 0 && age < g_settings.pollS) {
+      nextPollMs = millis() + (g_settings.pollS - age) * 1000;
+      return;
+    }
+  }
+  if ((int32_t)(nextPollMs - millis()) > 0) return;
 
   uint32_t retryAfterS = 0;
   uint32_t intervalS = g_settings.pollS;

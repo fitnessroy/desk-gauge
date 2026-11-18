@@ -251,7 +251,14 @@ static bool drawStatus(Ctx& g, const ClaudeUsage& c) {
     text(g, "sign in at", 120, 106, 12, g.t.dim);
     text(g, HOSTNAME ".local", 120, 126, 18, g.t.text);
   } else {
-    text(g, "loading", 120, 112, 18, g.t.dim);
+    // A bright arc circles the outer ring and three dots pulse in turn under the word.
+    uint32_t ms = millis();
+    float a = (ms % 1500) * 360.0f / 1500;
+    arc(g, 104, 116, a, a + 70, g.t.session);
+    text(g, "loading", 120, 108, 18, g.t.text);
+    int lit = (ms / 300) % 3;
+    for (int i = 0; i < 3; ++i)
+      g.s.fillCircle(g.X(110 + i * 10), g.X(128), g.X(i == lit ? 3 : 2), i == lit ? g.t.session : g.t.track);
   }
   if (c.error.length() && c.loggedIn) text(g, c.error.substring(0, 24), 120, 160, 12, g.t.bad);
   wifiLine(g, 184);
