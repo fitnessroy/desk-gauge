@@ -257,6 +257,8 @@ static bool drawStatus(Ctx& g, const ClaudeUsage& c) {
   if (!c.loggedIn) {
     text(g, "sign in at", 120, 106, 12, g.t.dim);
     text(g, HOSTNAME ".local", 120, 126, 18, g.t.text);
+    // Some computers can't resolve .local names; the IP always works.
+    if (WiFi.status() == WL_CONNECTED) text(g, "or " + WiFi.localIP().toString(), 120, 148, 12, g.t.dim);
   } else {
     // A bright arc circles the outer ring and three dots pulse in turn under the word.
     uint32_t ms = millis();

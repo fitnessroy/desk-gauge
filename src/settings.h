@@ -5,7 +5,7 @@
 enum class FaceMode : uint8_t { Rings = 0, Bars = 1, Rotate = 2 };
 
 struct Settings {
-  uint16_t pollS = 60;        // Claude usage poll interval
+  uint16_t pollS = 300;       // Claude usage poll interval (load() applies CLAUDE_POLL_DEFAULT_S)
   uint8_t theme = 0;          // index into ui::kThemes
   FaceMode face = FaceMode::Rotate;
   uint8_t brightness = 200;   // backlight 0-255

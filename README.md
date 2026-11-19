@@ -1,8 +1,8 @@
 # desk-gauge
 
 A standalone Claude usage gauge for your desk: an ESP32-S3 and a 1.8" round 360×360 screen.
-It signs in to your Claude account by itself and polls your plan usage over WiFi (every 60 s by
-default). No computer needs to stay on.
+It signs in to your Claude account by itself and polls your plan usage over Wi-Fi (every 5 minutes
+by default). It needs only power and Wi-Fi; no computer has to stay on.
 
 | Rings | Bars |
 |---|---|
@@ -13,16 +13,18 @@ default). No computer needs to stay on.
 - **Pace tick:** the white tick shows how much of the window has passed. If the coloured arc is ahead
   of the tick, you are burning faster than an even pace.
 - **Alerts:** "limit in 1h 20m" when the current rate hits 100% before the reset, `SPIKE` for a fast
-  jump (5+ points in about 5 minutes), and "week on pace for 130%" for the weekly limit.
-- **Sparklines:** the last 5 hours (rings) and 24 hours (bars) of session usage.
+  jump, and "week on pace for 130%" for the weekly limit.
+- **Top line:** the Wi-Fi network it is on (or amber "no Wi-Fi"). **Bottom:** the local time.
 - **Faces and themes:** rings, bars, or both in rotation, in six themes (Claude, Terminal, HUD, Nord,
-  Dracula, Mono). Change them at `http://desk-gauge.local/`.
+  Dracula, Mono), set on the gauge's web page.
+- **Survives restarts:** the last reading is kept in flash and shown at once after power-up, with an
+  animated "loading" screen only on the very first start.
 - **Optional extras:** the Mac bridge adds a live `LIVE 5.3k/min` badge and "tokens today". An optional
   second screen shows a Bambu Lab printer.
 
 ```
  Anthropic (usage + OAuth) ──HTTPS──> ESP32-S3 ──QSPI──> round screen
-                                         └──> http://desk-gauge.local/  (preview, sign-in, settings)
+                                         └──> http://desk-gauge.local/ or its IP (login, settings)
  optional: claude_usage_bridge.py ─HTTP─┘   (tokens/min, tokens today)
  optional: Bambu printer ──MQTT/TLS──────┘   (second screen)
 ```
@@ -31,7 +33,8 @@ default). No computer needs to stay on.
 
 | PlatformIO env | Board | Screen |
 |---|---|---|
-| `esp32s3` | ESP32-S3 DevKitC-1 **N16R8** | 1.8" ST77916 360×360 QSPI (2nd optional) |
+| `esp32s3` (default) | ESP32-S3 DevKitC-1 **N16R8** (or the common clone with two USB-C ports) | 1.8" ST77916 360×360 QSPI |
+| `esp32s3_ota` | same, flashed over Wi-Fi | same |
 | `esp32s3_n8r2` | ESP32-S3 DevKitC-1 **N8R2** | same |
 | `esp32dev` | ESP32 DevKit V1 (WROOM-32) | none: web preview only |
 
@@ -40,40 +43,80 @@ with the web preview.
 
 ### Wiring (ESP32-S3)
 
-Screen: DIYUSER 1.8" round, 360×360, **ST77916 over QSPI** (header: GND VCC SCL IO0 IO1 IO2 IO3 RST CS BL TE).
-The pins are set in `include/config.h` (`PANEL0_PINS`, `PANEL1_PINS`).
+Screen: 1.8" round, 360×360, **ST77916 over QSPI**, FPC marked `T180-02`
+(header: GND VCC SCL IO0 IO1 IO2 IO3 RST CS BL TE). The board's pins are printed as plain numbers;
+those numbers are the GPIOs below. Pins are set in `include/config.h` (`PANEL0_PINS`).
 
-| Screen pin | Screen 0 (Claude) | Screen 1 (printer, optional) |
+| Screen pin | ESP32-S3 pin | Screen 1 (printer, optional) |
 |---|---|---|
 | GND | GND | GND |
-| VCC | 3V3 | 3V3 |
-| SCL | GPIO 12 | GPIO 41 |
-| IO0 | GPIO 11 | GPIO 40 |
-| IO1 | GPIO 13 | GPIO 39 |
-| IO2 | GPIO 14 | GPIO 2 |
-| IO3 | GPIO 9 | GPIO 1 |
-| RST | GPIO 8 | GPIO 21 |
-| CS | GPIO 10 | GPIO 42 |
-| BL | GPIO 18 | GPIO 47 |
+| VCC | **3V3** (not 5V) | 3V3 |
+| SCL | 12 | 41 |
+| IO0 | 11 | 40 |
+| IO1 | 13 | 39 |
+| IO2 | 14 | 2 |
+| IO3 | 9 | 1 |
+| RST | 8 | 21 |
+| CS | 10 | 42 |
+| BL | 18 | 47 |
 | TE | not connected | not connected |
 
-> The driver is LovyanGFX `Panel_ST77916` (`-DLGFX_USE_QSPI`). Its start-up settings come from the Guition JC3636W518. If colours look wrong, flip `invert` / `rgb_order` in `src/panels.h`. If the screen stays black with the backlight on, this screen needs its seller's own start-up settings.
+On the two-port clone the left header reads, from the top: `3V3 3V3 RST 4 5 6 7 15 16 17 18 8 3 46 9
+10 11 12 13 14 5Vin GND`, so every wire for the screen goes to that one header.
+
+Things that cost us hours:
+
+- **VCC must go to 3V3.** On `5Vin` the screen stays black: that pin has no power when the board runs
+  from the USB port.
+- **Black with the backlight on** means the screen isn't getting valid data: check SCL/IO0-IO3/CS/RST.
+  The backlight works on its own (BL has a pull-up), so a lit screen proves nothing about the data wires.
+- **Black looks dark grey.** It's an LCD with a backlight, not an OLED. Lower brightness helps (175 works well).
+- The driver is our own (`src/panels.cpp`, ESP-IDF `spi_master`, 10 MHz). LovyanGFX's `Panel_ST77916`
+  woke this screen but never showed a picture, so LovyanGFX only draws into an off-screen sprite.
 
 ## Setup
 
 1. **Install PlatformIO:** `brew install platformio`
-2. **Secrets:** `cp include/secrets.example.h include/secrets.h` and fill in your WiFi. Leave the printer
-   lines commented out for a Claude-only gauge.
-3. **Flash:**
+2. **Secrets:** `cp include/secrets.example.h include/secrets.h`, then fill in:
+   - `WIFI_SSID` / `WIFI_PASS`: your main network.
+   - `WIFI_SSID2` / `WIFI_PASS2` (optional): a backup, e.g. a phone hotspot. The first network always
+     wins: the gauge moves back to it within about 3 minutes once it is in range again.
+   - `WEB_PASS` (required): the password for the gauge's web page and for updates over Wi-Fi. The
+     user name is `admin`.
+
+   `secrets.h` is gitignored; never commit it.
+3. **First flash, over USB.** Use the port marked **USB** (the native one), not COM.
    ```sh
-   pio run -e esp32s3      -t upload && pio device monitor   # N16R8
-   pio run -e esp32s3_n8r2 -t upload && pio device monitor   # N8R2
+   pio run -e esp32s3 -t upload
    ```
-4. **Sign in:** the screen says "sign in at desk-gauge.local". Open **http://desk-gauge.local/**,
-   click *Open Claude sign-in*, approve, paste the code Claude shows into the page, and click *Connect*.
+   If it fails with "No serial data received": hold **BOOT**, tap **RST**, let go of BOOT, then run
+   the command again. Afterwards tap **RST** to start the new firmware.
+
+   > Don't open the serial monitor on this port. Opening it can reset the board into download mode
+   > (black screen, nothing happens). If that happens, tap RST. Check the gauge over the network instead.
+4. **Find it on the network.** The sign-in screen shows `desk-gauge.local` and its IP address. If
+   `.local` doesn't open on your computer, use the IP (or look it up in your router).
+5. **Sign in to Claude:** open the page, log in with `admin` and your `WEB_PASS`, click
+   *Open Claude sign-in*, approve, paste the code Claude shows into the page, and click *Connect*.
    The gauge keeps its own login in flash and refreshes it by itself. You only do this once.
-5. **Settings** on the same page: poll interval (30 s to 1 h), face, theme and brightness. They are
-   stored on the device.
+6. **Settings** on the same page: poll interval (120 s to 1 h, default 300 s), face, theme and
+   brightness. They are stored on the device.
+7. **Later updates over Wi-Fi** (no cable):
+   ```sh
+   GAUGE_PASS='your WEB_PASS' pio run -e esp32s3_ota -t upload --upload-port <gauge IP>
+   ```
+
+### Moving it to another Wi-Fi
+
+The networks are compiled in. Change `WIFI_SSID`/`WIFI_PASS` (or add the new one as `WIFI_SSID2`) in
+`secrets.h` and flash again, over Wi-Fi while it can still reach you, or over USB. Then it will join
+the new network by itself.
+
+### Web page security
+
+Every page and `/state.json` needs the login. After 5 wrong passwords, logins are blocked for a
+minute. Changes (settings, sign-in, sign-out) also need a header that only the page itself sends, so
+another website can't make your browser change the gauge.
 
 ### Optional: tokens/min and tokens today
 
@@ -95,14 +138,18 @@ Then set `CLAUDE_BRIDGE_URL` in `secrets.h` and reflash.
 - **Usage:** `GET https://api.anthropic.com/api/oauth/usage` is the endpoint behind Claude Code's
   `/usage` screen. It returns `five_hour`, `seven_day` and `limits[]`.
   **It is undocumented and may change or break without notice.**
-- **Polling:** every 60 s by default. On errors or `429` the interval doubles, up to 5 minutes, and it
-  respects `Retry-After`.
+- **Polling:** every 5 minutes by default, 120 s at the fastest: the endpoint answers `429` when polled
+  every minute. On errors or `429` the interval doubles, up to 5 minutes, and it respects `Retry-After`.
+  After a restart the first poll waits until the saved reading is one poll interval old, so a few
+  quick restarts don't trigger `429`s.
 - **TLS:** servers are verified against root CAs embedded in `src/root_certs.h` (Google Trust Services,
   GlobalSign, ISRG). The clock comes from NTP first.
+- **Last reading** is saved in flash after every good poll and shown right away after a restart.
+  *Sign out* clears it.
 - **History** (sparklines, burn rate) is kept in RAM and starts over after a reboot.
 
 ## Notes
 
 - **Bambu:** the ESP connects directly to the printer (`bblp` / access code). If it can't connect on newer firmware, turn on *LAN Only* + *Developer Mode* on the printer. To see the printer's raw reports in the serial monitor, set `BAMBU_DUMP_RAW 1` in `config.h`.
-- **Time zone** for the reset clock time: `TIMEZONE` in `config.h` (default Europe/Oslo).
-- **`/state.json`** on the device has everything as JSON, for Home Assistant or similar.
+- **Time zone** for the clock and reset times: `TIMEZONE` in `config.h` (default Europe/Oslo).
+- **`/state.json`** on the device has everything as JSON (behind the same login), for Home Assistant or similar.
