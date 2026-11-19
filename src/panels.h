@@ -26,14 +26,16 @@ class RoundPanel {
   void setBrightness(uint8_t level);
   void fill(uint16_t rgb565);
   // A whole frame as LGFX_Sprite stores it (byte-swapped RGB565). It may live in PSRAM.
-  void pushFrame(const uint16_t* px);
+  void pushFrame(const uint16_t* px) { pushRows(px, 0, PANEL_H - 1); }
+  // Only rows y0..y1 of such a frame (`px` is still the whole frame).
+  void pushRows(const uint16_t* px, int y0, int y1);
 
  private:
   static constexpr int kBandBytes = 8192;  // Slmsim's chunk size
 
   void writeReg(uint8_t cmd, const uint8_t* data = nullptr, size_t len = 0);
-  void setFullWindow();
-  void beginPixels();
+  void setRowWindow(int y0, int y1);
+  void beginPixels(int y0 = 0, int y1 = PANEL_H - 1);
   void writePixels(const uint8_t* data, size_t len);
   void endPixels();
 

@@ -9,5 +9,7 @@ namespace ui {
 int themeCount();
 const char* themeName(int i);
 void drawClaude(LGFX_Sprite& s, const ClaudeUsage& c);
+// True while the Claude face shows something animated (loading, or the mascot on the bars face).
+bool animated(const ClaudeUsage& c);
 void drawPrinter(LGFX_Sprite& s, const PrinterState& p);
 }

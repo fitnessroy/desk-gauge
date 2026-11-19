@@ -28,16 +28,25 @@ ClaudeUsage g_claude;
 PrinterState g_printer;
 
 #if HAS_PANELS
-// Sends a frame only when it changed since the last one (`prev` is a copy in PSRAM).
+// Sends only the rows that changed since the last frame (`prev` is a copy in PSRAM), so a small
+// animation costs a strip of the screen instead of the whole frame.
 static void pushFrame(RoundPanel& panel, LGFX_Sprite& frame, uint16_t*& prev) {
   const auto* src = (const uint16_t*)frame.getBuffer();
   if (!src) return;
-  bool full = !prev;
-  if (full) prev = (uint16_t*)ps_malloc(PANEL_W * PANEL_H * 2);
-  if (!prev) return;
-  if (!full && !memcmp(src, prev, PANEL_W * PANEL_H * 2)) return;
-  panel.pushFrame(src);
-  memcpy(prev, src, PANEL_W * PANEL_H * 2);
+  if (!prev) {
+    prev = (uint16_t*)ps_malloc(PANEL_W * PANEL_H * 2);
+    if (!prev) return;
+    panel.pushFrame(src);
+    memcpy(prev, src, PANEL_W * PANEL_H * 2);
+    return;
+  }
+  const size_t row = PANEL_W * 2;
+  int y0 = 0, y1 = PANEL_H - 1;
+  while (y0 < PANEL_H && !memcmp(src + y0 * PANEL_W, prev + y0 * PANEL_W, row)) ++y0;
+  if (y0 == PANEL_H) return;
+  while (y1 > y0 && !memcmp(src + y1 * PANEL_W, prev + y1 * PANEL_W, row)) --y1;
+  panel.pushRows(src, y0, y1);
+  memcpy(prev + y0 * PANEL_W, src + y0 * PANEL_W, (y1 - y0 + 1) * row);
 }
 static uint16_t* prev0 = nullptr;
 #if ENABLE_PRINTER
@@ -201,7 +210,7 @@ void loop() {
 
 #if HAS_PANELS
   static uint32_t lastRender = 0;
-  if (millis() - lastRender >= (g_claude.valid ? RENDER_MS : RENDER_ANIM_MS)) {
+  if (millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
     lastRender = millis();
     applyBrightness();
     renderFace(0, frame0);

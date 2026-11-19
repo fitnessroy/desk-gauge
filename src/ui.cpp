@@ -248,11 +248,38 @@ static void clockText(Ctx& g, float y, float size) {
   text(g, fmtClock(now), 120, y, size, g.t.text);
 }
 
+// The Claude Code mascot, pixel for pixel from its terminal banner (quadrant blocks, so each
+// pixel is twice as tall as it is wide). '#' body, 'o' eye, 'a'/'b' the two pairs of legs.
+// It walks on the spot (the leg pairs take turns) and blinks every few seconds.
+static const char* const kMascot[] = {
+    "   ############   ",
+    "   ##o######o##   ",
+    " ################ ",
+    "   ############   ",
+    "    a b    b a    ",
+};
+
+// u is the pixel width on the 240 grid; the figure is 18u wide and 10u tall, centred on cx, cy.
+static void mascot(Ctx& g, float cx, float cy, float u, uint16_t col) {
+  uint32_t ms = millis();
+  bool stepA = (ms / 300) % 2, blink = ms % 4000 < 150;
+  int pw = max(1, g.X(u)), ph = pw * 2;
+  int x0 = g.X(cx) - 9 * pw, y0 = g.X(cy) - 5 * pw;
+  for (int r = 0; r < 5; ++r)
+    for (int c = 0; kMascot[r][c]; ++c) {
+      char p = kMascot[r][c];
+      int x = x0 + c * pw, y = y0 + r * ph;
+      if (p == '#' || (p == 'o' && blink)) g.s.fillRect(x, y, pw, ph, col);
+      else if (p == 'a' || p == 'b') g.s.fillRect(x, y, pw, (p == 'a') == stepA ? ph : pw, col);
+    }
+}
+
 // Not signed in / no data yet: empty rings and instructions.
 static bool drawStatus(Ctx& g, const ClaudeUsage& c) {
   if (c.valid) return false;
   ring(g, 104, 116, 0, 0, -1);
   ring(g, 92, 100, 0, 0, -1);
+  mascot(g, 120, 48, 2, g.t.session);
   text(g, "CLAUDE", 120, 70, 12, g.t.session);
   if (!c.loggedIn) {
     text(g, "sign in at", 120, 106, 12, g.t.dim);
@@ -312,9 +339,10 @@ static void barRow(Ctx& g, const char* label, const UsageWindow& w, float window
 
 static void drawBars(Ctx& g, const ClaudeUsage& c) {
   const Theme& t = g.t;
-  text(g, "CLAUDE", 120, 28, 12, t.session);
-  if (c.tokPerMin > 0) liveBadge(g, c, 42);
-  else wifiLine(g, 42);
+  mascot(g, 120, 14, 1.4f, t.session);
+  text(g, "CLAUDE", 120, 30, 12, t.session);
+  if (c.tokPerMin > 0) liveBadge(g, c, 44);
+  else wifiLine(g, 44);
 
   float y = 70;
   barRow(g, "Session", c.session, 5 * 3600, t.session, y);
@@ -330,14 +358,18 @@ static void drawBars(Ctx& g, const ClaudeUsage& c) {
   text(g, "reset " + fmtClock(c.session.resetsAt), 120, 214, 12, t.dim);
 }
 
+static bool barsShown() {
+  return g_settings.face == FaceMode::Bars ||
+         (g_settings.face == FaceMode::Rotate && (millis() / FACE_ROTATE_MS) % 2);
+}
+
+bool animated(const ClaudeUsage& c) { return !c.valid || barsShown(); }
+
 void drawClaude(LGFX_Sprite& s, const ClaudeUsage& c) {
   Ctx g{s, kThemes[constrain(g_settings.theme, 0, kThemeCount - 1)], s.width() / 240.0f, s.width() / 2};
   s.fillScreen(g.t.bg);
   if (drawStatus(g, c)) return;
-
-  bool bars = g_settings.face == FaceMode::Bars ||
-              (g_settings.face == FaceMode::Rotate && (millis() / FACE_ROTATE_MS) % 2);
-  if (bars) drawBars(g, c);
+  if (barsShown()) drawBars(g, c);
   else drawRings(g, c);
 }
 

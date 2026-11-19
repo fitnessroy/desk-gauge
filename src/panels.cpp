@@ -292,9 +292,10 @@ void RoundPanel::writeReg(uint8_t cmd, const uint8_t* data, size_t len) {
   digitalWrite(_p.cs, HIGH);
 }
 
-void RoundPanel::setFullWindow() {
+// Full-width window over rows y0..y1.
+void RoundPanel::setRowWindow(int y0, int y1) {
   const uint8_t col[] = {0, 0, (PANEL_W - 1) >> 8, (PANEL_W - 1) & 0xFF};
-  const uint8_t row[] = {0, 0, (PANEL_H - 1) >> 8, (PANEL_H - 1) & 0xFF};
+  const uint8_t row[] = {(uint8_t)(y0 >> 8), (uint8_t)y0, (uint8_t)(y1 >> 8), (uint8_t)y1};
   writeReg(0x2A, col, 4);
   writeReg(0x2B, row, 4);
 }
@@ -302,8 +303,8 @@ void RoundPanel::setFullWindow() {
 // Pixels as Slmsim's driver sends them: RAMWR (0x2C) as a plain command, then CS low for the
 // whole frame; the first chunk carries 0x32 + RAMWRC (0x3C) and the data on four lines, later
 // chunks are bare data. Separate CS bursts per chunk left this panel showing garbage.
-void RoundPanel::beginPixels() {
-  setFullWindow();
+void RoundPanel::beginPixels(int y0, int y1) {
+  setRowWindow(y0, y1);
   writeReg(0x2C);
   digitalWrite(_p.cs, LOW);
   _firstChunk = true;
@@ -334,11 +335,11 @@ void RoundPanel::fill(uint16_t rgb565) {
   endPixels();
 }
 
-void RoundPanel::pushFrame(const uint16_t* px) {
-  if (!_band) return;
-  const auto* src = (const uint8_t*)px;
-  const size_t total = PANEL_W * PANEL_H * 2;
-  beginPixels();
+void RoundPanel::pushRows(const uint16_t* px, int y0, int y1) {
+  if (!_band || y0 > y1) return;
+  const auto* src = (const uint8_t*)(px + y0 * PANEL_W);
+  const size_t total = (size_t)(y1 - y0 + 1) * PANEL_W * 2;
+  beginPixels(y0, y1);
   for (size_t off = 0; off < total; off += kBandBytes) {
     size_t n = min<size_t>(kBandBytes, total - off);
     memcpy(_band, src + off, n);  // the frame is in PSRAM; DMA reads from internal RAM
