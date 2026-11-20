@@ -153,3 +153,24 @@ Then set `CLAUDE_BRIDGE_URL` in `secrets.h` and reflash.
 - **Bambu:** the ESP connects directly to the printer (`bblp` / access code). If it can't connect on newer firmware, turn on *LAN Only* + *Developer Mode* on the printer. To see the printer's raw reports in the serial monitor, set `BAMBU_DUMP_RAW 1` in `config.h`.
 - **Time zone** for the clock and reset times: `TIMEZONE` in `config.h` (default Europe/Oslo).
 - **`/state.json`** on the device has everything as JSON (behind the same login), for Home Assistant or similar.
+
+## Credits
+
+Made by Roy Bringsli (FitnessProductions), built together with [Claude Code](https://claude.com/claude-code).
+
+Standing on the shoulders of:
+
+- **[Slmsim](https://github.com/Slmsim)**: the ST77916 start-up sequence and the way frames are sent
+  to this exact screen come from
+  [360-360-QSPI-Round-Display-ESP32-S3-N16R8-FFMjpeg-Player](https://github.com/Slmsim/360-360-QSPI-Round-Display-ESP32-S3-N16R8-FFMjpeg-Player)
+  (`PanelInit.h`, see `src/panels.cpp`). After a day of a black screen, this is what made it work. Thank you!
+- **[bozdemir/claude-usage-widget](https://github.com/bozdemir/claude-usage-widget)** (MIT): the faces,
+  pace tick, alerts and themes follow its design.
+- **[LovyanGFX](https://github.com/lovyan03/LovyanGFX)** by lovyan03 (FreeBSD license): draws the faces.
+- **[ArduinoJson](https://github.com/bblanchon/ArduinoJson)** by Benoît Blanchon (MIT) and
+  **[PubSubClient](https://github.com/knolleary/pubsubclient)** by Nick O'Leary (MIT).
+- **[Arduino-ESP32](https://github.com/espressif/arduino-esp32)** and ESP-IDF by Espressif (Apache 2.0).
+
+This is an unofficial fan project, not affiliated with or endorsed by Anthropic. Claude, the Claude
+star and the Claude Code mascot belong to Anthropic. The usage data comes from the same undocumented
+endpoint as Claude Code's `/usage` screen and may change without notice.
