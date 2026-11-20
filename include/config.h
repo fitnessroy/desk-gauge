@@ -62,6 +62,7 @@
 #define BAMBU_STALE_MS      60000   // no report for this long -> treat as offline
 #define RENDER_MS           500
 #define RENDER_ANIM_MS      80      // faster frames while something animates (loading, mascot)
+#define SPLASH_MS           10000   // boot splash length; setup carries on underneath it
 #define FACE_ROTATE_MS      10000   // "rotate" face mode: switch between rings and bars
 #define SERIAL_LOG_MS       10000
 #define WIFI_RETRY_MS       20000   // rescan for a known network this often while offline

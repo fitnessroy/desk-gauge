@@ -8,6 +8,8 @@
 namespace web {
 // Renders face `index` (0 = Claude, 1 = printer) into the given sprite.
 using RenderFn = std::function<void(int index, LGFX_Sprite& sprite)>;
-void begin(RenderFn render, int faceCount);
+// Starts the boot splash again on the screen ("Replay intro" on the page).
+using ActionFn = std::function<void()>;
+void begin(RenderFn render, int faceCount, ActionFn replaySplash);
 void loop();
 }

@@ -28,8 +28,8 @@ ClaudeUsage g_claude;
 PrinterState g_printer;
 
 #if HAS_PANELS
-// Sends only the rows that changed since the last frame (`prev` is a copy in PSRAM), so a small
-// animation costs a strip of the screen instead of the whole frame.
+// Sends only the rows that changed since the last frame (`prev` is a copy in PSRAM), as separate
+// bands when the changes are far apart, so small animations cost strips instead of whole frames.
 static void pushFrame(RoundPanel& panel, LGFX_Sprite& frame, uint16_t*& prev) {
   const auto* src = (const uint16_t*)frame.getBuffer();
   if (!src) return;
@@ -41,18 +41,51 @@ static void pushFrame(RoundPanel& panel, LGFX_Sprite& frame, uint16_t*& prev) {
     return;
   }
   const size_t row = PANEL_W * 2;
-  int y0 = 0, y1 = PANEL_H - 1;
-  while (y0 < PANEL_H && !memcmp(src + y0 * PANEL_W, prev + y0 * PANEL_W, row)) ++y0;
-  if (y0 == PANEL_H) return;
-  while (y1 > y0 && !memcmp(src + y1 * PANEL_W, prev + y1 * PANEL_W, row)) --y1;
-  panel.pushRows(src, y0, y1);
-  memcpy(prev + y0 * PANEL_W, src + y0 * PANEL_W, (y1 - y0 + 1) * row);
+  const int kMergeGap = 8;  // unchanged rows worth resending to save a window setup
+  auto changed = [&](int y) { return memcmp(src + y * PANEL_W, prev + y * PANEL_W, row) != 0; };
+  for (int y = 0; y < PANEL_H;) {
+    if (!changed(y)) {
+      ++y;
+      continue;
+    }
+    int y0 = y, y1 = y, quiet = 0;
+    while (++y < PANEL_H && quiet <= kMergeGap) {
+      if (changed(y)) y1 = y, quiet = 0;
+      else ++quiet;
+    }
+    y = y1 + 1;
+    panel.pushRows(src, y0, y1);
+    memcpy(prev + y0 * PANEL_W, src + y0 * PANEL_W, (y1 - y0 + 1) * row);
+  }
 }
 static uint16_t* prev0 = nullptr;
 #if ENABLE_PRINTER
 static uint16_t* prev1 = nullptr;
 #endif
+
+// The boot splash runs as its own task so Wi-Fi, NTP and the web server start underneath it.
+// While it runs it owns panel0/frame0, and loop() leaves the screen alone.
+static volatile bool splashRunning = false;
+static void splashTask(void*) {
+  uint32_t t0 = millis();
+  for (uint32_t t; (t = millis() - t0) < SPLASH_MS;) {
+    ui::drawSplash(frame0, t);
+    pushFrame(panel0, frame0, prev0);
+    vTaskDelay(1);
+  }
+  splashRunning = false;
+  vTaskDelete(nullptr);
+}
 #endif
+
+// Plays the boot splash (at boot, and from "Replay intro" on the web page).
+static void startSplash() {
+#if HAS_PANELS
+  if (splashRunning) return;
+  splashRunning = true;
+  xTaskCreatePinnedToCore(splashTask, "splash", 8192, nullptr, 1, nullptr, 1);
+#endif
+}
 
 static void renderFace(int index, LGFX_Sprite& s) {
   if (index == 0) ui::drawClaude(s, g_claude);
@@ -143,10 +176,17 @@ static void logState() {
 }
 
 #if HAS_PANELS
+// Eases the backlight toward its target (day brightness, or the night level while night mode
+// applies) instead of jumping, so night falls over about a second.
 static void applyBrightness() {
   static int applied = -1;
-  if (applied == g_settings.brightness) return;
-  applied = g_settings.brightness;
+  static uint32_t lastStep = 0;
+  int target = settings::isNight() ? g_settings.nightBright : g_settings.brightness;
+  if (applied == target) return;
+  if (applied < 0) applied = target;
+  else if (millis() - lastStep < 15) return;
+  else applied += constrain(target - applied, -4, 4);
+  lastStep = millis();
   panel0.setBrightness(applied);
 #if ENABLE_PRINTER
   panel1.setBrightness(applied);
@@ -180,6 +220,7 @@ void setup() {
   }
   applyBrightness();
 #endif
+  startSplash();
 
   connectWifi();
   configTzTime(TIMEZONE, "pool.ntp.org", "time.google.com");  // TLS and reset times need the clock
@@ -188,7 +229,7 @@ void setup() {
 #if ENABLE_PRINTER
   bambu_source::begin();
 #endif
-  web::begin(renderFace, kFaces);
+  web::begin(renderFace, kFaces, startSplash);
 
   // Firmware updates over Wi-Fi (pio run -e esp32s3_ota -t upload), same password as the web page.
   ArduinoOTA.setHostname(HOSTNAME);
@@ -209,10 +250,10 @@ void loop() {
   web::loop();
 
 #if HAS_PANELS
+  applyBrightness();
   static uint32_t lastRender = 0;
-  if (millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
+  if (!splashRunning && millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
     lastRender = millis();
-    applyBrightness();
     renderFace(0, frame0);
     pushFrame(panel0, frame0, prev0);
 #if ENABLE_PRINTER

@@ -11,5 +11,7 @@ const char* themeName(int i);
 void drawClaude(LGFX_Sprite& s, const ClaudeUsage& c);
 // True while the Claude face shows something animated (loading, or the mascot on the bars face).
 bool animated(const ClaudeUsage& c);
+// Frame t (ms) of the boot splash, SPLASH_MS long.
+void drawSplash(LGFX_Sprite& s, uint32_t t);
 void drawPrinter(LGFX_Sprite& s, const PrinterState& p);
 }

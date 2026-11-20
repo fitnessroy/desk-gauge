@@ -14,6 +14,7 @@ namespace web {
 
 static WebServer server(80);
 static RenderFn renderFace;
+static ActionFn replaySplash;
 static int faces = 1;
 
 static const char kIndex[] PROGMEM = R"HTML(<!doctype html>
@@ -60,7 +61,11 @@ a{color:#d97757}
 <label>Face <select id="face"><option value="0">Rings</option><option value="1">Bars</option><option value="2">Rotate</option></select></label>
 <label>Theme <select id="theme"></select></label>
 <label>Brightness <input type="range" id="bright" min="10" max="255"></label>
+<label>Night mode <input type="checkbox" id="non"></label>
+<label>Night from <span><input type="time" id="nstart"> to <input type="time" id="nend"></span></label>
+<label>Night brightness <span><input type="range" id="nbright" min="0" max="255"> <small class="muted">left = screen off</small></span></label>
 <p><button onclick="save()">Save</button> <span id="savemsg" class="muted"></span></p>
+<p><button class="ghost" onclick="post('/splash')">Replay intro</button></p>
 </section>
 
 <small><a href="/state.json">state.json</a></small>
@@ -77,6 +82,7 @@ async function load(first){
     $('theme').innerHTML=st.themes.map((t,i)=>`<option value="${i}">${t}</option>`).join('');
     $('poll').value=st.settings.poll_s;$('face').value=st.settings.face;
     $('theme').value=st.settings.theme;$('bright').value=st.settings.brightness;
+    $('non').checked=st.settings.night_on;$('nstart').value=st.settings.night_start;$('nend').value=st.settings.night_end;$('nbright').value=st.settings.night_bright;
   }
   $('signedout').hidden=c.logged_in;$('signedin').hidden=!c.logged_in;
   let s=c.logged_in?(c.valid?`<span class="ok">Signed in</span> · session ${Math.round(c.session.pct)}% · week ${Math.round(c.week.pct)}%`:'Signed in, waiting for data')
@@ -97,7 +103,8 @@ async function finishLogin(){
   load();
 }
 async function save(){
-  await post('/settings',{poll:$('poll').value,face:$('face').value,theme:$('theme').value,bright:$('bright').value});
+  await post('/settings',{poll:$('poll').value,face:$('face').value,theme:$('theme').value,bright:$('bright').value,
+    non:$('non').checked?1:0,nstart:$('nstart').value,nend:$('nend').value,nbright:$('nbright').value});
   $('savemsg').textContent='saved';setTimeout(()=>$('savemsg').textContent='',1500);
 }
 // Reload faces one at a time; the ESP renders on demand.
@@ -115,7 +122,9 @@ static void handleScreen(int index) {
     server.send(503, "text/plain", "out of memory");
     return;
   }
-  renderFace(index, spr);
+  // ?splash=<ms> shows that moment of the boot splash instead, for working on it.
+  if (server.hasArg("splash")) ui::drawSplash(spr, server.arg("splash").toInt());
+  else renderFace(index, spr);
 
   const int w = spr.width(), h = spr.height();
   const uint32_t rowBytes = (w * 3 + 3) & ~3u;
@@ -196,6 +205,14 @@ static void handleState() {
   s["face"] = (int)g_settings.face;
   s["theme"] = g_settings.theme;
   s["brightness"] = g_settings.brightness;
+  char hm[6];
+  s["night_on"] = g_settings.nightOn;
+  snprintf(hm, sizeof hm, "%02d:%02d", g_settings.nightStart / 60, g_settings.nightStart % 60);
+  s["night_start"] = hm;
+  snprintf(hm, sizeof hm, "%02d:%02d", g_settings.nightEnd / 60, g_settings.nightEnd % 60);
+  s["night_end"] = hm;
+  s["night_bright"] = g_settings.nightBright;
+  s["night_now"] = settings::isNight();
   JsonArray themes = doc["themes"].to<JsonArray>();
   for (int i = 0; i < ui::themeCount(); ++i) themes.add(ui::themeName(i));
   doc["faces"] = faces;
@@ -233,6 +250,15 @@ static void handleSettings() {
   if (server.hasArg("face")) g_settings.face = (FaceMode)constrain(server.arg("face").toInt(), 0, 2);
   if (server.hasArg("theme")) g_settings.theme = constrain(server.arg("theme").toInt(), 0, ui::themeCount() - 1);
   if (server.hasArg("bright")) g_settings.brightness = constrain(server.arg("bright").toInt(), 10, 255);
+  // "HH:MM" from the time inputs -> minutes after midnight; anything else leaves the value alone.
+  auto minutes = [](const String& v, uint16_t& out) {
+    int h, m;
+    if (sscanf(v.c_str(), "%d:%d", &h, &m) == 2 && h >= 0 && h < 24 && m >= 0 && m < 60) out = h * 60 + m;
+  };
+  if (server.hasArg("non")) g_settings.nightOn = server.arg("non") == "1";
+  if (server.hasArg("nstart")) minutes(server.arg("nstart"), g_settings.nightStart);
+  if (server.hasArg("nend")) minutes(server.arg("nend"), g_settings.nightEnd);
+  if (server.hasArg("nbright")) g_settings.nightBright = constrain(server.arg("nbright").toInt(), 0, 255);
   settings::save();
   server.send(204);
 }
@@ -273,8 +299,9 @@ static WebServer::THandlerFunction guarded(WebServer::THandlerFunction fn, bool 
   };
 }
 
-void begin(RenderFn render, int faceCount) {
+void begin(RenderFn render, int faceCount, ActionFn replay) {
   renderFace = render;
+  replaySplash = replay;
   faces = faceCount;
   static const char* kHeaders[] = {"Authorization", "X-Gauge"};
   server.collectHeaders(kHeaders, 2);
@@ -294,6 +321,10 @@ void begin(RenderFn render, int faceCount) {
     server.send(204);
   }, true));
   server.on("/settings", HTTP_POST, guarded(handleSettings, true));
+  server.on("/splash", HTTP_POST, guarded([] {
+    if (replaySplash) replaySplash();
+    server.send(204);
+  }, true));
   server.onNotFound(guarded([] { server.send(404, "text/plain", "Not found"); }));
   server.begin();
 }

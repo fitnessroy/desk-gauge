@@ -214,8 +214,12 @@ static void statusLine(Ctx& g, const ClaudeUsage& c, float y) {
     alertText(g, "week on pace for " + pctStr(min(c.weekProjectedPct, 999.0f)), y, g.t.warn, false);
   } else if (c.bridgeOk && c.todayTokens) {
     alertText(g, fmtCount(c.todayTokens) + " tok today", y, g.t.dim, false);
-  } else if (c.error.length()) {
-    alertText(g, "stale", y, g.t.warn, false);
+  } else if (c.fetchedAt && time(nullptr) > 1700000000) {
+    // How old the numbers are: dim normally, amber once two polls in a row have been missed.
+    int32_t age = max<int32_t>(0, time(nullptr) - c.fetchedAt);
+    bool old = age > 2 * (int32_t)g_settings.pollS;
+    alertText(g, age < 60 ? String("synced just now") : "synced " + fmtDuration(age) + " ago", y,
+              old ? g.t.warn : g.t.dim, false);
   }
 }
 
@@ -260,9 +264,8 @@ static const char* const kMascot[] = {
 };
 
 // u is the pixel width on the 240 grid; the figure is 18u wide and 10u tall, centred on cx, cy.
-static void mascot(Ctx& g, float cx, float cy, float u, uint16_t col) {
-  uint32_t ms = millis();
-  bool stepA = (ms / 300) % 2, blink = ms % 4000 < 150;
+// legs: 0 or 1 = which pair is down while walking, 2 = standing on all four.
+static void mascotFrame(Ctx& g, float cx, float cy, float u, uint16_t col, int legs, bool blink) {
   int pw = max(1, g.X(u)), ph = pw * 2;
   int x0 = g.X(cx) - 9 * pw, y0 = g.X(cy) - 5 * pw;
   for (int r = 0; r < 5; ++r)
@@ -270,8 +273,13 @@ static void mascot(Ctx& g, float cx, float cy, float u, uint16_t col) {
       char p = kMascot[r][c];
       int x = x0 + c * pw, y = y0 + r * ph;
       if (p == '#' || (p == 'o' && blink)) g.s.fillRect(x, y, pw, ph, col);
-      else if (p == 'a' || p == 'b') g.s.fillRect(x, y, pw, (p == 'a') == stepA ? ph : pw, col);
+      else if (p == 'a' || p == 'b') g.s.fillRect(x, y, pw, legs == 2 || (p == 'a') == (legs == 1) ? ph : pw, col);
     }
+}
+
+static void mascot(Ctx& g, float cx, float cy, float u, uint16_t col) {
+  uint32_t ms = millis();
+  mascotFrame(g, cx, cy, u, col, (ms / 300) % 2, ms % 4000 < 150);
 }
 
 // Not signed in / no data yet: empty rings and instructions.
@@ -356,6 +364,137 @@ static void drawBars(Ctx& g, const ClaudeUsage& c) {
   statusLine(g, c, sy + 34);
   clockText(g, 190, 18);
   text(g, "reset " + fmtClock(c.session.resetsAt), 120, 214, 12, t.dim);
+}
+
+// ---- Boot splash -------------------------------------------------------------------------------
+// A fixed 10 s intro in Claude's own palette, independent of the theme. Everything is a function
+// of t (ms since boot), so the splash task can draw any frame at any rate.
+
+static float clamp01(float x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+static float phase(uint32_t t, float a, float b) { return clamp01((t - a) / (b - a)); }
+static float easeOut(float x) { return 1 - powf(1 - x, 3); }
+static float easeInOut(float x) { return x < 0.5f ? 4 * x * x * x : 1 - powf(-2 * x + 2, 3) / 2; }
+static float easeOutBack(float x) {
+  const float c1 = 1.70158f, c3 = c1 + 1;
+  return 1 + c3 * powf(x - 1, 3) + c1 * powf(x - 1, 2);
+}
+
+// a..b in RGB565 by f (0 = a, 1 = b).
+static uint16_t blend(uint16_t a, uint16_t b, float f) {
+  f = clamp01(f);
+  auto mix = [f](int x, int y) { return (int)(x + (y - x) * f + 0.5f); };
+  int r = mix(a >> 11, b >> 11), gg = mix((a >> 5) & 63, (b >> 5) & 63), bl = mix(a & 31, b & 31);
+  return (r << 11) | (gg << 5) | bl;
+}
+
+// Text with extra space between letters (tracking on the 240 grid), centred on x.
+static void trackedText(Ctx& g, const char* str, float x, float y, float size, float tracking, uint16_t col) {
+  g.s.setFont(font(size * g.k));
+  g.s.setTextSize(1);
+  g.s.setTextColor(col);
+  g.s.setTextDatum(textdatum_t::middle_left);
+  int n = strlen(str), total = 0;
+  char ch[2] = {0, 0};
+  for (int i = 0; i < n; ++i) ch[0] = str[i], total += g.s.textWidth(ch);
+  float px = g.X(x) - (total + tracking * g.k * (n - 1)) / 2;
+  for (int i = 0; i < n; ++i) {
+    ch[0] = str[i];
+    g.s.drawString(ch, (int)roundf(px), g.X(y));
+    px += g.s.textWidth(ch) + tracking * g.k;
+  }
+}
+
+void drawSplash(LGFX_Sprite& s, uint32_t t) {
+  Ctx g{s, kThemes[0], s.width() / 240.0f, s.width() / 2};
+  const uint16_t bg = rgb(20, 20, 19), orange = rgb(217, 119, 87), cream = rgb(250, 249, 245),
+                 grey = rgb(150, 146, 138), track = rgb(46, 44, 41);
+  float out = 1 - easeInOut(phase(t, SPLASH_MS - 700, SPLASH_MS));  // final fade to black
+  auto col = [&](uint16_t c, float a) { return blend(bg, c, a * out); };
+  s.fillScreen(bg);
+
+  // Progress ring around the edge: track fades in, then the orange arc sweeps once from the top.
+  float tr = phase(t, 100, 800);
+  if (tr > 0) arc(g, 113, 115.5f, 0, 360, col(track, tr));
+  float p = easeInOut(phase(t, 500, SPLASH_MS - 900));
+  if (p > 0) {
+    arc(g, 113, 115.5f, 270, 270 + 360 * p, col(orange, 1));
+    int x, y;
+    polar(g, 114.25f, 270 + 360 * p, x, y);
+    s.fillSmoothCircle(x, y, g.X(2.6f), col(cream, 1));
+  }
+
+  // The Claude star: twelve tapered rays grow out one after another, then it breathes; at the end
+  // it spins half a turn with a small pulse.
+  static const float kLen[12] = {1.0f, 0.74f, 0.9f, 0.68f, 0.97f, 0.78f, 0.88f, 0.7f, 1.0f, 0.8f, 0.86f, 0.72f};
+  float sec = t / 1000.0f;
+  float settle = easeOut(phase(t, 150, 1700));
+  float fin = phase(t, 8300, 9300);
+  float rot = (-70 * (1 - settle) + sec * 6 + 180 * easeInOut(fin)) * DEG_TO_RAD;
+  float R = 25 * g.k * (1 + 0.14f * sinf(PI * fin));
+  int sx = g.X(120), sy = g.X(70);
+  for (int i = 0; i < 12; ++i) {
+    float grow = phase(t, 150 + i * 55, 700 + i * 55);
+    if (grow <= 0) continue;
+    float e = easeOutBack(grow);
+    float len = R * kLen[i] * e * (1 + 0.035f * sinf(sec * 2.2f + i * 1.1f));
+    float a = rot + i * (PI / 6);
+    s.drawWedgeLine(sx, sy, sx + (int)roundf(cosf(a) * len), sy + (int)roundf(sinf(a) * len),
+                    R * 0.14f * min(e, 1.0f), 1.0f, col(orange, 1));
+  }
+  if (t > 150) s.fillSmoothCircle(sx, sy, (int)roundf(R * 0.17f), col(orange, 1));
+
+  // "Claude", letter by letter, each sliding up a little as it fades in.
+  {
+    const char* word = "Claude";
+    g.s.setFont(font(27 * g.k));
+    g.s.setTextSize(1);
+    g.s.setTextDatum(textdatum_t::middle_left);
+    int total = g.s.textWidth(word), px = g.X(120) - total / 2;
+    char ch[2] = {0, 0};
+    for (int i = 0; word[i]; ++i) {
+      ch[0] = word[i];
+      float a = easeOut(phase(t, 1500 + i * 90, 2000 + i * 90));
+      if (a > 0) {
+        g.s.setTextColor(col(cream, a));
+        g.s.drawString(ch, px, g.X(113 + 5 * (1 - a)));
+      }
+      px += g.s.textWidth(ch);
+    }
+  }
+
+  // "GAUGE": orange capitals whose spacing opens up as they fade in.
+  float ga = easeOut(phase(t, 2200, 3000));
+  if (ga > 0) trackedText(g, "GAUGE", 120, 139, 12, 2 + 5 * ga, col(orange, ga));
+
+  // Divider growing from the centre, then the byline.
+  float dv = easeOut(phase(t, 2700, 3300));
+  if (dv > 0) s.fillRect(g.X(120 - 20 * dv), g.X(152), max(1, g.X(40 * dv)), max(1, g.X(0.7f)), col(blend(bg, orange, 0.55f), 1));
+  float by = easeOut(phase(t, 3100, 3700));
+  if (by > 0) text(g, "by FitnessProductions", 120, 164, 8, col(grey, by));
+
+  // The mascot walks in from the left, stops in the middle, blinks twice and hops at the finale.
+  float walkIn = phase(t, 3800, 6200);
+  if (walkIn > 0) {
+    bool walking = walkIn < 1;
+    float mx = 70 + (120 - 70) * easeOut(walkIn);
+    float hop = sinf(PI * phase(t, 8450, 9050)) * 9;
+    float bob = walking && (t / 140) % 2 ? 0.8f : 0;
+    bool blink = (t > 6600 && t < 6750) || (t > 7800 && t < 7950);
+    mascotFrame(g, mx, 191 - bob - hop, 1.9f, col(orange, easeOut(phase(t, 3800, 4300))),
+                walking ? (t / 140) % 2 : 2, blink);
+  }
+
+  // Real network state under it, so the wait means something.
+  float st = easeOut(phase(t, 4400, 5000));
+  if (st > 0) {
+    String msg;
+    if (WiFi.status() == WL_CONNECTED) msg = "connected to " + WiFi.SSID();
+    else {
+      msg = "joining Wi-Fi";
+      for (int i = 0; i < (int)(t / 350) % 4; ++i) msg += '.';
+    }
+    text(g, msg, 120, 213, 8, col(grey, st));
+  }
 }
 
 static bool barsShown() {
