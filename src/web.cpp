@@ -70,7 +70,7 @@ a{color:#d97757}
 <button class="ghost" onclick="post('/saver')">Play screensaver</button></p>
 </section>
 
-<small><a href="/state.json">state.json</a></small>
+<small><a href="/state.json">state.json</a> · firmware <span id="ver"></span></small>
 <script>
 const $=id=>document.getElementById(id);
 const post=(u,body)=>fetch(u,{method:'POST',headers:{'X-Gauge':'1'},body:body?new URLSearchParams(body):undefined});
@@ -79,7 +79,7 @@ function fmt(s){if(s<0)return'--';const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60
 async function load(first){
   const st=await (await fetch('/state.json')).json(), c=st.claude;
   if(first){
-    FACES=st.faces;
+    FACES=st.faces;$('ver').textContent=st.version;
     $('faces').innerHTML=[...Array(FACES).keys()].map(i=>`<img id="f${i}" src="/screen/${i}.bmp">`).join('');
     $('theme').innerHTML=st.themes.map((t,i)=>`<option value="${i}">${t}</option>`).join('');
     $('poll').value=st.settings.poll_s;$('face').value=st.settings.face;
@@ -126,7 +126,10 @@ static void handleScreen(int index) {
   }
   // ?splash=<ms> or ?saver=<ms> shows that moment of the boot splash or screensaver instead.
   if (server.hasArg("splash")) ui::drawSplash(spr, server.arg("splash").toInt());
-  else if (server.hasArg("saver")) ui::drawSaver(spr, g_claude, server.arg("saver").toInt());
+  else if (server.hasArg("saver")) {
+    ui::drawClaude(spr, g_claude);
+    ui::drawSaver(spr, nullptr, server.arg("saver").toInt());
+  }
   else renderFace(index, spr);
 
   const int w = spr.width(), h = spr.height();
@@ -220,6 +223,13 @@ static void handleState() {
   JsonArray themes = doc["themes"].to<JsonArray>();
   for (int i = 0; i < ui::themeCount(); ++i) themes.add(ui::themeName(i));
   doc["faces"] = faces;
+  doc["version"] = FW_VERSION;
+  JsonObject perf = doc["perf"].to<JsonObject>();
+  perf["frames"] = g_perf.frames;
+  perf["render_ms"] = g_perf.frames ? g_perf.renderMs / g_perf.frames : 0;
+  perf["push_ms"] = g_perf.frames ? g_perf.pushMs / g_perf.frames : 0;
+  perf["gap_ms"] = g_perf.frames > 1 ? g_perf.gapMs / (g_perf.frames - 1) : 0;
+  perf["fps"] = g_perf.totalMs ? g_perf.frames * 1000.0f / g_perf.totalMs : 0;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["uptime_s"] = millis() / 1000;
 

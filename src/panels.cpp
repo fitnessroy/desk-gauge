@@ -6,7 +6,7 @@
 // Entries: cmd, n (| 0x80 = a delay in ms follows), n parameter bytes, [ms].
 //
 // Init sequence from Slmsim's ST77916 MJPEG player, which runs this exact module (1.8" 360x360
-// QSPI round, ESP32-S3 N16R8): github.com/Slmsim/1.8inch-360-360-QSPI-Round-Display-w-ST77916-ESP32-S3-N16R8-Mjpeg-Player
+// QSPI round, ESP32-S3 N16R8): github.com/Slmsim/360-360-QSPI-Round-Display-ESP32-S3-N16R8-FFMjpeg-Player
 // (PanelInit.h). Ends with INVON, SLPOUT, RGB565, MADCTL 0x00, DISPON.
 static const uint8_t kInitSlmsim[] = {
     0x01, 0x80, 120,
@@ -214,7 +214,7 @@ static const uint8_t kInitSlmsim[] = {
 };
 
 
-static constexpr uint32_t kSpiHz = 10 * 1000 * 1000;  // ample for 2 frames/s over jumper wires
+static constexpr uint32_t kSpiHz = 40 * 1000 * 1000;
 
 bool RoundPanel::init() {
   pinMode(_p.rst, OUTPUT);

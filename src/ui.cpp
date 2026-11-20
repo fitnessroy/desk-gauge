@@ -527,8 +527,8 @@ static void sparkle(Ctx& g, float cx, float cy, float r, uint16_t col) {
   g.s.fillSmoothCircle(x, y, max(1, R / 4), col);
 }
 
-void drawSaver(LGFX_Sprite& s, const ClaudeUsage& c, uint32_t t) {
-  drawClaude(s, c);
+void drawSaver(LGFX_Sprite& s, const uint16_t* base, uint32_t t) {
+  if (base) memcpy(s.getBuffer(), base, s.bufferLength());
   Ctx g{s, kThemes[constrain(g_settings.theme, 0, kThemeCount - 1)], s.width() / 240.0f, s.width() / 2};
   const uint16_t bg = g.t.bg, accent = g.t.session, foam = rgb(185, 220, 245);
   const int kBands = 6;

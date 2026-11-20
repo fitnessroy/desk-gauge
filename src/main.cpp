@@ -25,6 +25,7 @@ static LGFX_Sprite frame1;
 #endif
 
 ClaudeUsage g_claude;
+FramePerf g_perf;
 PrinterState g_printer;
 
 #if HAS_PANELS
@@ -78,15 +79,45 @@ static void splashTask(void*) {
 }
 #endif
 
-// The screensaver runs in loop() itself (it reads g_claude, which only loop() writes):
-// every saverMin minutes, or from "Play screensaver" on the web page.
-static bool saverOn = false;
-static uint32_t saverStart = 0, saverDone = 0;
+// The screensaver runs as its own task like the splash, every saverMin minutes or from "Play
+// screensaver" on the web page. The dashboard is drawn once, in loop()'s thread (the only one that
+// touches g_claude), and the task paints the wipe over a copy of it each frame.
+static volatile bool saverOn = false;
+static uint32_t saverDone = 0;
+static uint16_t* saverBase = nullptr;
+#if HAS_PANELS
+static void saverTask(void*) {
+  uint32_t start = millis();
+  g_perf = FramePerf();
+  for (uint32_t t; (t = millis() - start) < SAVER_MS;) {
+    uint32_t t0 = millis();
+    if (g_perf.lastEnd) g_perf.gapMs += t0 - g_perf.lastEnd;
+    ui::drawSaver(frame0, saverBase, t);
+    uint32_t t1 = millis();
+    pushFrame(panel0, frame0, prev0);
+    g_perf.frames++;
+    g_perf.renderMs += t1 - t0;
+    g_perf.pushMs += millis() - t1;
+    g_perf.totalMs = t;
+    g_perf.lastEnd = millis();
+    vTaskDelay(1);
+  }
+  saverDone = millis();
+  saverOn = false;
+  vTaskDelete(nullptr);
+}
+#endif
+
 static void startSaver() {
 #if HAS_PANELS
   if (splashRunning || saverOn) return;
+  if (!saverBase) saverBase = (uint16_t*)ps_malloc(PANEL_W * PANEL_H * 2);
+  if (!saverBase) return;
+  ui::drawClaude(frame0, g_claude);
+  memcpy(saverBase, frame0.getBuffer(), PANEL_W * PANEL_H * 2);
   saverOn = true;
-  saverStart = millis();
+  // Above loop() so a busy pass there (TLS, web) doesn't stall frames; it yields every frame.
+  xTaskCreatePinnedToCore(saverTask, "saver", 8192, nullptr, 2, nullptr, 1);
 #endif
 }
 
@@ -268,16 +299,6 @@ void loop() {
       !(settings::isNight() && g_settings.nightBright == 0) &&
       millis() - saverDone >= g_settings.saverMin * 60000UL)
     startSaver();
-  if (saverOn) {
-    uint32_t t = millis() - saverStart;
-    if (t < SAVER_MS) {
-      ui::drawSaver(frame0, g_claude, t);
-      pushFrame(panel0, frame0, prev0);
-    } else {
-      saverOn = false;
-      saverDone = millis();
-    }
-  }
   static uint32_t lastRender = 0;
   if (!splashRunning && !saverOn && millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
     lastRender = millis();

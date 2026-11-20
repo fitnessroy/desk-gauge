@@ -92,3 +92,9 @@ struct PrinterState {
 
 extern ClaudeUsage g_claude;
 extern PrinterState g_printer;
+
+// Frame timing of the last screensaver run, in /state.json ("perf").
+struct FramePerf {
+  uint32_t frames = 0, renderMs = 0, pushMs = 0, totalMs = 0, gapMs = 0, lastEnd = 0;
+};
+extern FramePerf g_perf;
