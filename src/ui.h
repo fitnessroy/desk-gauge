@@ -13,5 +13,7 @@ void drawClaude(LGFX_Sprite& s, const ClaudeUsage& c);
 bool animated(const ClaudeUsage& c);
 // Frame t (ms) of the boot splash, SPLASH_MS long.
 void drawSplash(LGFX_Sprite& s, uint32_t t);
+// Frame t (ms) of the screensaver (SAVER_MS long): the mascot wipes the screen with a sponge.
+void drawSaver(LGFX_Sprite& s, const ClaudeUsage& c, uint32_t t);
 void drawPrinter(LGFX_Sprite& s, const PrinterState& p);
 }

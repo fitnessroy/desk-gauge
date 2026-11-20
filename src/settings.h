@@ -15,6 +15,7 @@ struct Settings {
   uint16_t nightStart = 23 * 60;
   uint16_t nightEnd = 7 * 60;
   uint8_t nightBright = 0;
+  uint16_t saverMin = 60;     // screensaver every this many minutes, 0 = off
 };
 
 extern Settings g_settings;

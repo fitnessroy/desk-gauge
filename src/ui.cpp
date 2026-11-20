@@ -497,6 +497,118 @@ void drawSplash(LGFX_Sprite& s, uint32_t t) {
   }
 }
 
+// ---- Screensaver -------------------------------------------------------------------------------
+// The mascot wipes the screen with a kitchen sponge: drops in at the top, scrubs six zigzag passes
+// (the dashboard behind the sponge goes dark and soap bubbles drift up), admires the clean screen
+// while it sparkles, then a glint sweeps the dashboard back in. Also a pure function of t.
+
+static float hash01(int n) {
+  float x = sinf(n * 12.9898f) * 43758.5453f;
+  return x - floorf(x);
+}
+
+static void sponge(Ctx& g, float cx, float cy, uint16_t bg) {
+  const uint16_t body = rgb(250, 214, 64), pore = rgb(214, 170, 34), pad = rgb(58, 150, 82);
+  const float w = 20, h = 26;
+  int x = g.X(cx - w / 2), y = g.X(cy - h / 2), W = g.X(w), H = g.X(h), r = g.X(3.5f);
+  g.s.fillRoundRect(x, y, W, H, r, body);
+  g.s.fillRoundRect(x, y, W, g.X(7), r, pad);  // green scouring side on top
+  g.s.fillRect(x, y + g.X(4), W, g.X(3), pad);
+  static const float kPores[][2] = {{-5, 1}, {4, 3}, {-2, 7}, {6, 9}, {-6, 10}, {1, 11}};
+  for (const auto& p : kPores) g.s.fillCircle(g.X(cx + p[0]), g.X(cy + p[1]), max(1, g.X(1.3f)), pore);
+  (void)bg;
+}
+
+static void sparkle(Ctx& g, float cx, float cy, float r, uint16_t col) {
+  if (r < 0.5f) return;
+  int x = g.X(cx), y = g.X(cy), R = g.X(r);
+  g.s.drawWedgeLine(x - R, y, x + R, y, 0.6f, 0.6f, col);
+  g.s.drawWedgeLine(x, y - R, x, y + R, 0.6f, 0.6f, col);
+  g.s.fillSmoothCircle(x, y, max(1, R / 4), col);
+}
+
+void drawSaver(LGFX_Sprite& s, const ClaudeUsage& c, uint32_t t) {
+  drawClaude(s, c);
+  Ctx g{s, kThemes[constrain(g_settings.theme, 0, kThemeCount - 1)], s.width() / 240.0f, s.width() / 2};
+  const uint16_t bg = g.t.bg, accent = g.t.session, foam = rgb(185, 220, 245);
+  const int kBands = 6;
+  const float kBandH = 240.0f / kBands, mu = 1.6f, reach = 9 * mu + 8;  // mascot half-width + arm to sponge
+  const uint32_t kDrop = 700, kPass = 850, kMove = 220, kStep = kPass + kMove;
+  const uint32_t wipeEnd = kDrop + (kBands - 1) * kStep + kPass, cleanEnd = wipeEnd + 1100,
+                 revealEnd = cleanEnd + 900;
+  auto bandY = [&](int k) { return kBandH * (k + 0.5f); };
+  auto half = [&](int k) { float d = bandY(k) - 120; return sqrtf(max(0.0f, 120 * 120 - d * d)) - 16; };
+  auto passX = [&](int k, float f) {  // sponge x along pass k; even passes go left to right
+    float a = 120 - half(k), b = 120 + half(k);
+    return k % 2 ? b + (a - b) * f : a + (b - a) * f;
+  };
+  float sec = t / 1000.0f;
+
+  if (t < wipeEnd) {
+    int k = 0;
+    float f = 0, y = bandY(0), drop = 0;
+    if (t < kDrop) {
+      drop = 1 - easeOutBack(phase(t, 0, kDrop));  // falls in from above with a little bounce
+    } else {
+      k = min<int>((t - kDrop) / kStep, kBands - 1);
+      uint32_t local = t - kDrop - k * kStep;
+      f = min(1.0f, local / (float)kPass);
+      if (local > kPass && k < kBands - 1) y += kBandH * easeInOut((local - kPass) / (float)kMove);
+      y = local > kPass ? y : bandY(k);
+    }
+    // Wiped so far: every band above, and this band up to the sponge.
+    if (k > 0) s.fillRect(0, 0, s.width(), g.X(kBandH * k), bg);
+    float x = passX(k, f);
+    int bandTop = g.X(kBandH * k), bandH = g.X(kBandH) + 1;
+    if (t >= kDrop) {
+      if (k % 2 == 0) s.fillRect(0, bandTop, g.X(x), bandH, bg);
+      else s.fillRect(g.X(x), bandTop, s.width() - g.X(x), bandH, bg);
+    }
+    // Soap bubbles left along the passes: they swell, drift up and pop.
+    for (int b = 0; b < kBands * 4; ++b) {
+      int pk = b / 4;
+      float bf = ((b % 4) + 0.3f + 0.4f * hash01(b)) / 4;
+      float born = kDrop + pk * kStep + bf * kPass, age = t - born;
+      if (age < 0 || age > 1400) continue;
+      float r = (2.5f + 3.5f * hash01(b + 50)) * easeOut(min(1.0f, age / 300));
+      float bx = passX(pk, bf) + (hash01(b + 90) - 0.5f) * 10, by = bandY(pk) + (hash01(b + 130) - 0.5f) * 22 - age / 140;
+      s.drawCircle(g.X(bx), g.X(by), g.X(r), foam);
+      s.fillCircle(g.X(bx - r * 0.35f), g.X(by - r * 0.35f), max(1, g.X(r * 0.18f)), rgb(255, 255, 255));
+    }
+    // The cleaner: sponge in front on the leading side, scrubbing up and down.
+    int dir = k % 2 ? -1 : 1;
+    float scrub = t >= kDrop && f < 1 ? sinf(sec * 2 * PI * 6) * 6 : 0;
+    float my = y - drop * 60;
+    mascotFrame(g, x - dir * reach, my + 4, mu, accent, t >= kDrop && f < 1 ? (t / 120) % 2 : 2, false);
+    sponge(g, x, my + scrub, bg);
+    return;
+  }
+
+  if (t < cleanEnd) {
+    // Spotless: sparkles pop in turn while the mascot hops to the middle and admires its work.
+    s.fillScreen(bg);
+    static const float kSpark[][3] = {{78, 70, 0}, {162, 92, 180}, {112, 128, 360}, {150, 168, 520}};
+    for (const auto& p : kSpark) {
+      float a = phase(t, wipeEnd + p[2], wipeEnd + p[2] + 500);
+      sparkle(g, p[0], p[1], 9 * sinf(PI * a), rgb(255, 255, 255));
+    }
+    float hopIn = easeInOut(phase(t, wipeEnd, wipeEnd + 450));
+    float x0 = passX(kBands - 1, 1) + reach;
+    float mx = x0 + (120 - x0) * hopIn, my = bandY(kBands - 1) + (196 - bandY(kBands - 1)) * hopIn;
+    my -= sinf(PI * hopIn) * 18 + sinf(PI * phase(t, wipeEnd + 650, wipeEnd + 950)) * 8;
+    bool blink = t > wipeEnd + 500 && t < wipeEnd + 620;
+    mascotFrame(g, mx, my, mu, accent, 2, blink);
+    return;
+  }
+
+  // A glint sweeps left to right and the dashboard is back behind it; the mascot walks off ahead.
+  float gx = -10 + 260 * easeInOut(phase(t, cleanEnd, revealEnd));
+  if (gx < 240) s.fillRect(max(0, g.X(gx)), 0, s.width() - max(0, g.X(gx)), s.height(), bg);
+  s.fillRect(g.X(gx) - 1, 0, 3, s.height(), rgb(255, 255, 255));
+  s.fillRect(g.X(gx) - 4, 0, 3, s.height(), blend(bg, accent, 0.5f));
+  mascotFrame(g, gx + 22, 196, mu, accent, (t / 120) % 2, false);
+}
+
 static bool barsShown() {
   return g_settings.face == FaceMode::Bars ||
          (g_settings.face == FaceMode::Rotate && (millis() / FACE_ROTATE_MS) % 2);

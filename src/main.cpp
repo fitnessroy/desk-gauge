@@ -78,6 +78,18 @@ static void splashTask(void*) {
 }
 #endif
 
+// The screensaver runs in loop() itself (it reads g_claude, which only loop() writes):
+// every saverMin minutes, or from "Play screensaver" on the web page.
+static bool saverOn = false;
+static uint32_t saverStart = 0, saverDone = 0;
+static void startSaver() {
+#if HAS_PANELS
+  if (splashRunning || saverOn) return;
+  saverOn = true;
+  saverStart = millis();
+#endif
+}
+
 // Plays the boot splash (at boot, and from "Replay intro" on the web page).
 static void startSplash() {
 #if HAS_PANELS
@@ -229,7 +241,7 @@ void setup() {
 #if ENABLE_PRINTER
   bambu_source::begin();
 #endif
-  web::begin(renderFace, kFaces, startSplash);
+  web::begin(renderFace, kFaces, startSplash, startSaver);
 
   // Firmware updates over Wi-Fi (pio run -e esp32s3_ota -t upload), same password as the web page.
   ArduinoOTA.setHostname(HOSTNAME);
@@ -251,8 +263,23 @@ void loop() {
 
 #if HAS_PANELS
   applyBrightness();
+  // Pointless with the backlight off at night, and it waits until there is a dashboard to wipe.
+  if (g_settings.saverMin && !saverOn && !splashRunning && g_claude.valid &&
+      !(settings::isNight() && g_settings.nightBright == 0) &&
+      millis() - saverDone >= g_settings.saverMin * 60000UL)
+    startSaver();
+  if (saverOn) {
+    uint32_t t = millis() - saverStart;
+    if (t < SAVER_MS) {
+      ui::drawSaver(frame0, g_claude, t);
+      pushFrame(panel0, frame0, prev0);
+    } else {
+      saverOn = false;
+      saverDone = millis();
+    }
+  }
   static uint32_t lastRender = 0;
-  if (!splashRunning && millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
+  if (!splashRunning && !saverOn && millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
     lastRender = millis();
     renderFace(0, frame0);
     pushFrame(panel0, frame0, prev0);

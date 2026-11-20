@@ -19,6 +19,7 @@ void load() {
   g_settings.nightStart = p.getUShort("nStart", 23 * 60) % 1440;
   g_settings.nightEnd = p.getUShort("nEnd", 7 * 60) % 1440;
   g_settings.nightBright = p.getUChar("nBright", 0);
+  g_settings.saverMin = min<uint16_t>(p.getUShort("saver", 60), 1440);
   p.end();
 }
 
@@ -33,6 +34,7 @@ void save() {
   p.putUShort("nStart", g_settings.nightStart);
   p.putUShort("nEnd", g_settings.nightEnd);
   p.putUChar("nBright", g_settings.nightBright);
+  p.putUShort("saver", g_settings.saverMin);
   p.end();
 }
 

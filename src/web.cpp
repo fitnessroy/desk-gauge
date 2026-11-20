@@ -14,7 +14,7 @@ namespace web {
 
 static WebServer server(80);
 static RenderFn renderFace;
-static ActionFn replaySplash;
+static ActionFn replaySplash, playSaver;
 static int faces = 1;
 
 static const char kIndex[] PROGMEM = R"HTML(<!doctype html>
@@ -65,7 +65,9 @@ a{color:#d97757}
 <label>Night from <span><input type="time" id="nstart"> to <input type="time" id="nend"></span></label>
 <label>Night brightness <span><input type="range" id="nbright" min="0" max="255"> <small class="muted">left = screen off</small></span></label>
 <p><button onclick="save()">Save</button> <span id="savemsg" class="muted"></span></p>
-<p><button class="ghost" onclick="post('/splash')">Replay intro</button></p>
+<label>Screensaver every <span><input type="number" id="saver" min="0" max="1440" style="width:80px"> min <small class="muted">0 = off</small></span></label>
+<p><button class="ghost" onclick="post('/splash')">Replay intro</button>
+<button class="ghost" onclick="post('/saver')">Play screensaver</button></p>
 </section>
 
 <small><a href="/state.json">state.json</a></small>
@@ -82,7 +84,7 @@ async function load(first){
     $('theme').innerHTML=st.themes.map((t,i)=>`<option value="${i}">${t}</option>`).join('');
     $('poll').value=st.settings.poll_s;$('face').value=st.settings.face;
     $('theme').value=st.settings.theme;$('bright').value=st.settings.brightness;
-    $('non').checked=st.settings.night_on;$('nstart').value=st.settings.night_start;$('nend').value=st.settings.night_end;$('nbright').value=st.settings.night_bright;
+    $('non').checked=st.settings.night_on;$('nstart').value=st.settings.night_start;$('nend').value=st.settings.night_end;$('nbright').value=st.settings.night_bright;$('saver').value=st.settings.saver_min;
   }
   $('signedout').hidden=c.logged_in;$('signedin').hidden=!c.logged_in;
   let s=c.logged_in?(c.valid?`<span class="ok">Signed in</span> · session ${Math.round(c.session.pct)}% · week ${Math.round(c.week.pct)}%`:'Signed in, waiting for data')
@@ -104,7 +106,7 @@ async function finishLogin(){
 }
 async function save(){
   await post('/settings',{poll:$('poll').value,face:$('face').value,theme:$('theme').value,bright:$('bright').value,
-    non:$('non').checked?1:0,nstart:$('nstart').value,nend:$('nend').value,nbright:$('nbright').value});
+    non:$('non').checked?1:0,nstart:$('nstart').value,nend:$('nend').value,nbright:$('nbright').value,saver:$('saver').value});
   $('savemsg').textContent='saved';setTimeout(()=>$('savemsg').textContent='',1500);
 }
 // Reload faces one at a time; the ESP renders on demand.
@@ -122,8 +124,9 @@ static void handleScreen(int index) {
     server.send(503, "text/plain", "out of memory");
     return;
   }
-  // ?splash=<ms> shows that moment of the boot splash instead, for working on it.
+  // ?splash=<ms> or ?saver=<ms> shows that moment of the boot splash or screensaver instead.
   if (server.hasArg("splash")) ui::drawSplash(spr, server.arg("splash").toInt());
+  else if (server.hasArg("saver")) ui::drawSaver(spr, g_claude, server.arg("saver").toInt());
   else renderFace(index, spr);
 
   const int w = spr.width(), h = spr.height();
@@ -213,6 +216,7 @@ static void handleState() {
   s["night_end"] = hm;
   s["night_bright"] = g_settings.nightBright;
   s["night_now"] = settings::isNight();
+  s["saver_min"] = g_settings.saverMin;
   JsonArray themes = doc["themes"].to<JsonArray>();
   for (int i = 0; i < ui::themeCount(); ++i) themes.add(ui::themeName(i));
   doc["faces"] = faces;
@@ -258,6 +262,7 @@ static void handleSettings() {
   if (server.hasArg("non")) g_settings.nightOn = server.arg("non") == "1";
   if (server.hasArg("nstart")) minutes(server.arg("nstart"), g_settings.nightStart);
   if (server.hasArg("nend")) minutes(server.arg("nend"), g_settings.nightEnd);
+  if (server.hasArg("saver")) g_settings.saverMin = constrain(server.arg("saver").toInt(), 0, 1440);
   if (server.hasArg("nbright")) g_settings.nightBright = constrain(server.arg("nbright").toInt(), 0, 255);
   settings::save();
   server.send(204);
@@ -299,9 +304,10 @@ static WebServer::THandlerFunction guarded(WebServer::THandlerFunction fn, bool 
   };
 }
 
-void begin(RenderFn render, int faceCount, ActionFn replay) {
+void begin(RenderFn render, int faceCount, ActionFn replay, ActionFn saver) {
   renderFace = render;
   replaySplash = replay;
+  playSaver = saver;
   faces = faceCount;
   static const char* kHeaders[] = {"Authorization", "X-Gauge"};
   server.collectHeaders(kHeaders, 2);
@@ -321,6 +327,10 @@ void begin(RenderFn render, int faceCount, ActionFn replay) {
     server.send(204);
   }, true));
   server.on("/settings", HTTP_POST, guarded(handleSettings, true));
+  server.on("/saver", HTTP_POST, guarded([] {
+    if (playSaver) playSaver();
+    server.send(204);
+  }, true));
   server.on("/splash", HTTP_POST, guarded([] {
     if (replaySplash) replaySplash();
     server.send(204);
