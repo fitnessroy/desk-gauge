@@ -53,4 +53,4 @@ No screws are needed. Optional: 4 × 8 mm rubber feet (recesses in the base plat
 ## License
 Personal, non-commercial use only: [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 Print it for yourself, remix it and share your remix under the same terms, but do not sell the
-files, printed parts or kits. See [`LICENSE`](../../LICENSE).
+files, printed parts or kits. See [`LICENSE`](LICENSE).

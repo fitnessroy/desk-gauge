@@ -178,9 +178,7 @@ endpoint as Claude Code's `/usage` screen and may change without notice.
 
 ## License
 
-**Personal, non-commercial use only.** Build one for yourself, change it and share your changes,
-but do not sell gauges, printed enclosures, kits, the firmware or the print files, or use them in a
-commercial product. The firmware is under the
-[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
-and the enclosure under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
-Third-party code keeps its own license. See [`LICENSE`](LICENSE).
+The 3D-printed enclosure in [`hardware/enclosure`](hardware/enclosure) is for **personal,
+non-commercial use only** ([CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)):
+print it for yourself and share your remixes, but do not sell the files, printed parts or kits.
+See [`hardware/enclosure/LICENSE`](hardware/enclosure/LICENSE).
