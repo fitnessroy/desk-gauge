@@ -178,7 +178,8 @@ endpoint as Claude Code's `/usage` screen and may change without notice.
 
 ## License
 
-The 3D-printed enclosure in [`hardware/enclosure`](hardware/enclosure) is for **personal,
-non-commercial use only** ([CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)):
-print it for yourself and share your remixes, but do not sell the files, printed parts or kits.
-See [`hardware/enclosure/LICENSE`](hardware/enclosure/LICENSE).
+- **Firmware and code:** [MIT](LICENSE). Third-party code keeps its own license (see Credits).
+- **3D-printed enclosure** in [`hardware/enclosure`](hardware/enclosure): **personal,
+  non-commercial use only** ([CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)).
+  Print it for yourself and share your remixes, but do not sell the files, printed parts or kits.
+  See [`hardware/enclosure/LICENSE`](hardware/enclosure/LICENSE).
