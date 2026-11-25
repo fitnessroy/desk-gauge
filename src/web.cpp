@@ -60,6 +60,7 @@ a{color:#d97757}
 <label>Poll every <span><input type="number" id="poll" min="120" max="3600" style="width:80px"> s</span></label>
 <label>Face <select id="face"><option value="0">Rings</option><option value="1">Bars</option><option value="2">Rotate</option></select></label>
 <label>Theme <select id="theme"></select></label>
+<label>Orientation <select id="rot"><option value="0">0°</option><option value="1">90°</option><option value="2">180°</option><option value="3">270°</option></select></label>
 <label>Brightness <input type="range" id="bright" min="10" max="255"></label>
 <label>Night mode <input type="checkbox" id="non"></label>
 <label>Night from <span><input type="time" id="nstart"> to <input type="time" id="nend"></span></label>
@@ -84,7 +85,7 @@ async function load(first){
     $('theme').innerHTML=st.themes.map((t,i)=>`<option value="${i}">${t}</option>`).join('');
     $('poll').value=st.settings.poll_s;$('face').value=st.settings.face;
     $('theme').value=st.settings.theme;$('bright').value=st.settings.brightness;
-    $('non').checked=st.settings.night_on;$('nstart').value=st.settings.night_start;$('nend').value=st.settings.night_end;$('nbright').value=st.settings.night_bright;$('saver').value=st.settings.saver_min;
+    $('non').checked=st.settings.night_on;$('nstart').value=st.settings.night_start;$('nend').value=st.settings.night_end;$('nbright').value=st.settings.night_bright;$('saver').value=st.settings.saver_min;$('rot').value=st.settings.rotation;
   }
   $('signedout').hidden=c.logged_in;$('signedin').hidden=!c.logged_in;
   let s=c.logged_in?(c.valid?`<span class="ok">Signed in</span> · session ${Math.round(c.session.pct)}% · week ${Math.round(c.week.pct)}%`:'Signed in, waiting for data')
@@ -106,7 +107,7 @@ async function finishLogin(){
 }
 async function save(){
   await post('/settings',{poll:$('poll').value,face:$('face').value,theme:$('theme').value,bright:$('bright').value,
-    non:$('non').checked?1:0,nstart:$('nstart').value,nend:$('nend').value,nbright:$('nbright').value,saver:$('saver').value});
+    non:$('non').checked?1:0,nstart:$('nstart').value,nend:$('nend').value,nbright:$('nbright').value,saver:$('saver').value,rot:$('rot').value});
   $('savemsg').textContent='saved';setTimeout(()=>$('savemsg').textContent='',1500);
 }
 // Reload faces one at a time; the ESP renders on demand.
@@ -220,6 +221,7 @@ static void handleState() {
   s["night_bright"] = g_settings.nightBright;
   s["night_now"] = settings::isNight();
   s["saver_min"] = g_settings.saverMin;
+  s["rotation"] = g_settings.rotation;
   JsonArray themes = doc["themes"].to<JsonArray>();
   for (int i = 0; i < ui::themeCount(); ++i) themes.add(ui::themeName(i));
   doc["faces"] = faces;
@@ -274,6 +276,7 @@ static void handleSettings() {
   if (server.hasArg("nend")) minutes(server.arg("nend"), g_settings.nightEnd);
   if (server.hasArg("saver")) g_settings.saverMin = constrain(server.arg("saver").toInt(), 0, 1440);
   if (server.hasArg("nbright")) g_settings.nightBright = constrain(server.arg("nbright").toInt(), 0, 255);
+  if (server.hasArg("rot")) g_settings.rotation = server.arg("rot").toInt() & 3;
   settings::save();
   server.send(204);
 }

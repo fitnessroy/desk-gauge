@@ -20,6 +20,7 @@ void load() {
   g_settings.nightEnd = p.getUShort("nEnd", 7 * 60) % 1440;
   g_settings.nightBright = p.getUChar("nBright", 0);
   g_settings.saverMin = min<uint16_t>(p.getUShort("saver", 60), 1440);
+  g_settings.rotation = p.getUChar("rot", 0) & 3;
   p.end();
 }
 
@@ -35,6 +36,7 @@ void save() {
   p.putUShort("nEnd", g_settings.nightEnd);
   p.putUChar("nBright", g_settings.nightBright);
   p.putUShort("saver", g_settings.saverMin);
+  p.putUChar("rot", g_settings.rotation);
   p.end();
 }
 

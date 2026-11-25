@@ -99,8 +99,9 @@ Things that cost us hours:
 5. **Sign in to Claude:** open the page, log in with `admin` and your `WEB_PASS`, click
    *Open Claude sign-in*, approve, paste the code Claude shows into the page, and click *Connect*.
    The gauge keeps its own login in flash and refreshes it by itself. You only do this once.
-6. **Settings** on the same page: poll interval (120 s to 1 h, default 300 s), face, theme and
-   brightness. They are stored on the device.
+6. **Settings** on the same page: poll interval (120 s to 1 h, default 300 s), face, theme,
+   brightness and screen orientation (0°, 90°, 180° or 270°, to suit how the screen is mounted).
+   They are stored on the device.
 7. **Later updates over Wi-Fi** (no cable):
    ```sh
    GAUGE_PASS='your WEB_PASS' pio run -e esp32s3_ota -t upload --upload-port <gauge IP>

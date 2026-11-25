@@ -64,6 +64,15 @@ static uint16_t* prev0 = nullptr;
 static uint16_t* prev1 = nullptr;
 #endif
 
+// Orientation from the web page. The sprites turn their drawing coordinates, so the buffer that
+// goes to the panel comes out rotated; the web preview renders into its own sprite and stays upright.
+static void applyRotation() {
+  frame0.setRotation(g_settings.rotation);
+#if ENABLE_PRINTER
+  frame1.setRotation(g_settings.rotation);
+#endif
+}
+
 // The boot splash runs as its own task so Wi-Fi, NTP and the web server start underneath it.
 // While it runs it owns panel0/frame0, and loop() leaves the screen alone.
 static volatile bool splashRunning = false;
@@ -113,6 +122,7 @@ static void startSaver() {
   if (splashRunning || saverOn) return;
   if (!saverBase) saverBase = (uint16_t*)ps_malloc(PANEL_W * PANEL_H * 2);
   if (!saverBase) return;
+  applyRotation();
   ui::drawClaude(frame0, g_claude);
   memcpy(saverBase, frame0.getBuffer(), PANEL_W * PANEL_H * 2);
   saverOn = true;
@@ -125,6 +135,7 @@ static void startSaver() {
 static void startSplash() {
 #if HAS_PANELS
   if (splashRunning) return;
+  applyRotation();
   splashRunning = true;
   xTaskCreatePinnedToCore(splashTask, "splash", 8192, nullptr, 1, nullptr, 1);
 #endif
@@ -302,6 +313,7 @@ void loop() {
   static uint32_t lastRender = 0;
   if (!splashRunning && !saverOn && millis() - lastRender >= (ui::animated(g_claude) ? RENDER_ANIM_MS : RENDER_MS)) {
     lastRender = millis();
+    applyRotation();
     renderFace(0, frame0);
     pushFrame(panel0, frame0, prev0);
 #if ENABLE_PRINTER
