@@ -174,3 +174,12 @@ Standing on the shoulders of:
 This is an unofficial fan project, not affiliated with or endorsed by Anthropic. Claude, the Claude
 star and the Claude Code mascot belong to Anthropic. The usage data comes from the same undocumented
 endpoint as Claude Code's `/usage` screen and may change without notice.
+
+## License
+
+**Personal, non-commercial use only.** Build one for yourself, change it and share your changes,
+but do not sell gauges, printed enclosures, kits, the firmware or the print files, or use them in a
+commercial product. The firmware is under the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+and the enclosure under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+Third-party code keeps its own license. See [`LICENSE`](LICENSE).

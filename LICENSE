@@ -1,0 +1,29 @@
+Desk Gauge
+Copyright (c) 2026 Roy Bringsli (FitnessProductions)
+
+Personal, non-commercial use only.
+
+In plain words:
+
+  - You may build one (or a few) for yourself, change it, and share your changes.
+  - You may NOT sell the gauge, the printed enclosure, kits, the firmware, or the
+    print files, and you may not use them in a commercial product or service.
+  - Keep this notice and credit the original project when you share it.
+
+If you want to use any of it commercially, ask first.
+
+The legal terms are:
+
+  Firmware and source code (src/, include/, platformio.ini and the rest of the code):
+    PolyForm Noncommercial License 1.0.0
+    https://polyformproject.org/licenses/noncommercial/1.0.0/
+
+  3D-printed enclosure (hardware/: STL and Blender files):
+    Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+    https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+Third-party code and libraries (listed under "Credits" in README.md) keep their
+own licenses. This notice does not change them.
+
+Claude, the Claude star and the Claude Code mascot belong to Anthropic and are not
+covered by this license. This is an unofficial fan project.
