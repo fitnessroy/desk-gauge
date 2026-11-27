@@ -79,7 +79,8 @@ Things that cost us hours:
 1. **Install PlatformIO:** `brew install platformio`
 2. **Secrets (optional):** `cp include/secrets.example.h include/secrets.h` and fill in your Wi-Fi
    and `WEB_PASS`, so your own gauge comes up on your network without the setup hotspot. The values
-   are only defaults: anything saved on the web page wins. Without `secrets.h` the gauge starts
+   are only defaults: anything saved on the web page wins, and after a **Factory reset** they are left
+   out until the flash is erased over USB (`pio run -e esp32s3 -t erase -t upload`). Without `secrets.h` the gauge starts
    with its setup hotspot (see [First-time setup](#first-time-setup-no-computer-needed)).
    `secrets.h` is gitignored; never commit it.
 3. **First flash, over USB.** Use the port marked **USB** (the native one), not COM.

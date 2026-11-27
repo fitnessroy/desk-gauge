@@ -12,8 +12,12 @@ namespace device {
 void load() {
   Preferences p;
   p.begin("device", true);
-  // A key that was never saved falls back to secrets.h; one saved empty stays empty.
-  auto get = [&](const char* key, const char* def) { return p.isKey(key) ? p.getString(key) : String(def); };
+  // A key that was never saved falls back to secrets.h; one saved empty stays empty. After a factory
+  // reset secrets.h is left out too, so the gauge really starts over with its setup hotspot.
+  bool defaults = !p.getBool("wasReset", false);
+  auto get = [&](const char* key, const char* def) {
+    return p.isKey(key) ? p.getString(key) : String(defaults ? def : "");
+  };
   g_device.ssid = get("ssid", WIFI_SSID);
   g_device.pass = get("pass", WIFI_PASS);
   g_device.ssid2 = get("ssid2", WIFI_SSID2);
@@ -51,6 +55,11 @@ bool printerOn() { return g_device.bambuIp.length() && g_device.bambuSerial.leng
 void factoryReset() {
   Serial.println("[device] factory reset");
   nvs_flash_erase();
+  nvs_flash_init();
+  Preferences p;
+  p.begin("device", false);
+  p.putBool("wasReset", true);
+  p.end();
   delay(100);
   ESP.restart();
 }
