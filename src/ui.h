@@ -17,4 +17,6 @@ void drawSplash(LGFX_Sprite& s, uint32_t t);
 // `base` is a snapshot of the dashboard copied in first; nullptr = it is already in the sprite.
 void drawSaver(LGFX_Sprite& s, const uint16_t* base, uint32_t t);
 void drawPrinter(LGFX_Sprite& s, const PrinterState& p);
+// Setup hotspot: a QR code that joins it, its name and password, and the page address.
+void drawSetup(LGFX_Sprite& s, const String& title, const String& ssid, const String& pass);
 }

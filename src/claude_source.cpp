@@ -7,6 +7,7 @@
 
 #include "claude_auth.h"
 #include "config.h"
+#include "device.h"
 #include "model.h"
 #include "net.h"
 #include "settings.h"
@@ -220,8 +221,8 @@ static bool fetchUsage(uint32_t& retryAfterS) {
   return false;
 }
 
-#ifdef CLAUDE_BRIDGE_URL
 static void pollBridge() {
+  if (!g_device.bridgeUrl.length()) return;
   static uint32_t last = 0;
   static bool first = true;
   if (!first && millis() - last < BRIDGE_POLL_MS) return;
@@ -230,7 +231,7 @@ static void pollBridge() {
 
   HTTPClient http;
   http.setTimeout(5000);
-  if (!http.begin(CLAUDE_BRIDGE_URL) || http.GET() != 200) {
+  if (!http.begin(g_device.bridgeUrl) || http.GET() != 200) {
     g_claude.bridgeOk = false;
     http.end();
     return;
@@ -246,16 +247,13 @@ static void pollBridge() {
   g_claude.todayTokens = doc["today_tokens"] | (uint64_t)0;
   g_claude.tokPerMin = doc["tok_per_min"] | 0u;
 }
-#endif
 
 void loop() {
   g_claude.loggedIn = claude_auth::loggedIn();
   int32_t wait = (int32_t)(nextPollMs - millis());
   g_claude.nextPollInS = wait > 0 ? wait / 1000 : 0;
   if (WiFi.status() != WL_CONNECTED) return;
-#ifdef CLAUDE_BRIDGE_URL
   pollBridge();
-#endif
   if (!net::clockSet()) return;
   if (restored) {
     // First poll after a restart: wait until the cached reading is one poll interval old.

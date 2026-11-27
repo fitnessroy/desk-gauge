@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
+#include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
 
@@ -7,21 +8,21 @@
 #include "claude_auth.h"
 #include "claude_source.h"
 #include "config.h"
+#include "device.h"
 #include "model.h"
 #include "settings.h"
 #include "ui.h"
 #include "web.h"
 
-static constexpr int kFaces = ENABLE_PRINTER ? 2 : 1;
+// The printer face (and the second screen) is there when a printer is set up.
+static bool printer = false;
 
 #if HAS_PANELS
 #include "panels.h"
 static RoundPanel panel0(SPI2_HOST, PanelPins PANEL0_PINS, 6);
 static LGFX_Sprite frame0;
-#if ENABLE_PRINTER
 static RoundPanel panel1(SPI3_HOST, PanelPins PANEL1_PINS, 7);
 static LGFX_Sprite frame1;
-#endif
 #endif
 
 ClaudeUsage g_claude;
@@ -60,17 +61,13 @@ static void pushFrame(RoundPanel& panel, LGFX_Sprite& frame, uint16_t*& prev) {
   }
 }
 static uint16_t* prev0 = nullptr;
-#if ENABLE_PRINTER
 static uint16_t* prev1 = nullptr;
-#endif
 
 // Orientation from the web page. The sprites turn their drawing coordinates, so the buffer that
 // goes to the panel comes out rotated; the web preview renders into its own sprite and stays upright.
 static void applyRotation() {
   frame0.setRotation(g_settings.rotation);
-#if ENABLE_PRINTER
-  frame1.setRotation(g_settings.rotation);
-#endif
+  if (printer) frame1.setRotation(g_settings.rotation);
 }
 
 // The boot splash runs as its own task so Wi-Fi, NTP and the web server start underneath it.
@@ -141,23 +138,53 @@ static void startSplash() {
 #endif
 }
 
+// Setup hotspot (see SETUP_AP_* in config.h). Its password is new each time and shown only on the
+// screen, so whoever joins it has the gauge in front of them; the web page trusts them without a login.
+static DNSServer dns;
+static bool apOn = false;
+static uint32_t apSince = 0;
+static String apSsid, apPass;
+
+static void startSetupAp() {
+  if (apOn) return;
+  char id[5];
+  snprintf(id, sizeof id, "%04X", (uint16_t)(ESP.getEfuseMac() >> 32));
+  apSsid = String(SETUP_AP_PREFIX) + id;
+  static const char kChars[] = "abcdefghjkmnpqrstuvwxyz23456789";  // nothing to mix up with 1/l/0/o
+  apPass = "";
+  for (int i = 0; i < 8; ++i) apPass += kChars[esp_random() % (sizeof kChars - 1)];
+  WiFi.mode(WIFI_AP_STA);  // the station side keeps scanning and joining the home network
+  WiFi.softAP(apSsid.c_str(), apPass.c_str());
+  dns.start(53, "*", WiFi.softAPIP());  // every name points here, so phones pop up the setup page
+  apOn = true;
+  apSince = millis();
+  Serial.printf("[setup] hotspot %s, password %s, http://%s/\n", apSsid.c_str(), apPass.c_str(),
+                WiFi.softAPIP().toString().c_str());
+}
+
+static void stopSetupAp() {
+  dns.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  apOn = false;
+  Serial.println("[setup] hotspot closed");
+}
+
 static void renderFace(int index, LGFX_Sprite& s) {
-  if (index == 0) ui::drawClaude(s, g_claude);
+  if (index == 0 && apOn) {
+    const char* title = !device::configured() ? "WI-FI SETUP"
+                        : WiFi.status() != WL_CONNECTED ? "CAN'T FIND WI-FI" : "SETUP MODE";
+    ui::drawSetup(s, title, apSsid, apPass);
+  } else if (index == 0) ui::drawClaude(s, g_claude);
   else ui::drawPrinter(s, g_printer);
 }
 
-// Networks in priority order: WIFI_SSID first, WIFI_SSID2 only while the first is not in range.
+// Networks in priority order: the main one first, the backup only while the main one is not in range.
 struct WifiNet {
-  const char* ssid;
-  const char* pass;
+  String ssid, pass;
 };
-static const WifiNet kNets[] = {
-    {WIFI_SSID, WIFI_PASS},
-#ifdef WIFI_SSID2
-    {WIFI_SSID2, WIFI_PASS2},
-#endif
-};
-static constexpr int kNetCount = sizeof kNets / sizeof kNets[0];
+static WifiNet nets[2];
+static int netCount = 0;
 
 // Index of the highest-priority network in range, -1 if none, -2 if the scan failed.
 static int bestNetworkInRange() {
@@ -165,16 +192,16 @@ static int bestNetworkInRange() {
   if (n < 0) return -2;
   int best = -1;
   for (int i = 0; i < n; ++i)
-    for (int k = 0; k < kNetCount; ++k)
-      if (WiFi.SSID(i) == kNets[k].ssid && (best < 0 || k < best)) best = k;
+    for (int k = 0; k < netCount; ++k)
+      if (WiFi.SSID(i) == nets[k].ssid && (best < 0 || k < best)) best = k;
   WiFi.scanDelete();
   return best;
 }
 
 static bool joinNetwork(int k, uint32_t timeoutMs) {
-  Serial.printf("[wifi] connecting to %s\n", kNets[k].ssid);
+  Serial.printf("[wifi] connecting to %s\n", nets[k].ssid.c_str());
   WiFi.disconnect();
-  WiFi.begin(kNets[k].ssid, kNets[k].pass);
+  WiFi.begin(nets[k].ssid.c_str(), nets[k].pass.c_str());
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) delay(100);
   if (WiFi.status() != WL_CONNECTED) return false;
@@ -185,17 +212,21 @@ static bool joinNetwork(int k, uint32_t timeoutMs) {
 
 // Joins the best network in range, falling back down the list if joining fails.
 static bool joinBest(uint32_t timeoutMs) {
+  if (!netCount) return false;
   int best = bestNetworkInRange();
   if (best == -1) return false;
-  for (int k = best < 0 ? 0 : best; k < kNetCount; ++k)
+  for (int k = best < 0 ? 0 : best; k < netCount; ++k)
     if (joinNetwork(k, timeoutMs)) return true;
   return false;
 }
 
 static void connectWifi() {
+  if (g_device.ssid.length()) nets[netCount++] = {g_device.ssid, g_device.pass};
+  if (g_device.ssid2.length()) nets[netCount++] = {g_device.ssid2, g_device.pass2};
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
   WiFi.setAutoReconnect(true);
+  if (!device::configured()) return;
   for (int i = 0; i < 3 && !joinBest(10000); ++i) {
   }
   if (WiFi.status() != WL_CONNECTED) Serial.println("[wifi] not connected yet, will keep retrying");
@@ -205,13 +236,26 @@ static void connectWifi() {
 // network every WIFI_PREFER_MS and move back to it once it is in range.
 static void maintainWifi() {
   static uint32_t lastTry = 0, lastPreferCheck = 0;
+  if (apOn) {
+    dns.processNextRequest();
+    if (!device::configured()) return;
+    if (WiFi.status() == WL_CONNECTED) {
+      if (millis() - apSince >= SETUP_AP_MIN_MS && WiFi.softAPgetStationNum() == 0) stopSetupAp();
+      return;
+    }
+    // Not while someone is on the hotspot: scanning and joining move it to another channel.
+    if (WiFi.softAPgetStationNum() || millis() - lastTry < SETUP_RETRY_MS) return;
+    lastTry = millis();
+    joinBest(8000);
+    return;
+  }
   if (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastTry < WIFI_RETRY_MS) return;
     lastTry = millis();
     joinBest(8000);
     return;
   }
-  if (kNetCount < 2 || WiFi.SSID() == kNets[0].ssid || millis() - lastPreferCheck < WIFI_PREFER_MS) return;
+  if (netCount < 2 || WiFi.SSID() == nets[0].ssid || millis() - lastPreferCheck < WIFI_PREFER_MS) return;
   lastPreferCheck = millis();
   if (bestNetworkInRange() == 0 && !joinNetwork(0, 10000)) joinBest(8000);
 }
@@ -221,11 +265,10 @@ static void logState() {
                 g_claude.loggedIn, g_claude.valid, g_claude.session.pct, g_claude.session.remaining(),
                 g_claude.week.pct, g_claude.week.remaining(), g_claude.scopedCount, g_claude.nextPollInS,
                 g_claude.error.c_str());
-#if ENABLE_PRINTER
-  Serial.printf("[printer] online=%d %s %d%% %dmin layer %d/%d N%.0f B%.0f\n", g_printer.online,
+  if (printer)
+    Serial.printf("[printer] online=%d %s %d%% %dmin layer %d/%d N%.0f B%.0f\n", g_printer.online,
                 g_printer.gcodeState.c_str(), g_printer.percent, g_printer.remainingMin, g_printer.layer,
                 g_printer.totalLayers, g_printer.nozzle, g_printer.bed);
-#endif
   Serial.printf("[sys] heap=%u\n", ESP.getFreeHeap());
 }
 
@@ -242,9 +285,7 @@ static void applyBrightness() {
   else applied += constrain(target - applied, -4, 4);
   lastStep = millis();
   panel0.setBrightness(applied);
-#if ENABLE_PRINTER
-  panel1.setBrightness(applied);
-#endif
+  if (printer) panel1.setBrightness(applied);
 }
 #endif
 
@@ -252,6 +293,9 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("\n=== desk-gauge ===");
+  device::load();
+  printer = device::printerOn();
+  bool setupAsked = device::quickRestartsRequestSetup();
   settings::load();
   claude_auth::begin();
   claude_source::begin();
@@ -260,12 +304,9 @@ void setup() {
   struct {
     RoundPanel* panel;
     LGFX_Sprite* frame;
-  } screens[] = {{&panel0, &frame0},
-#if ENABLE_PRINTER
-                 {&panel1, &frame1}
-#endif
-  };
+  } screens[] = {{&panel0, &frame0}, {&panel1, &frame1}};
   for (auto& sc : screens) {
+    if (sc.panel == &panel1 && !printer) break;
     if (!sc.panel->init()) Serial.println("[panel] init failed");
     sc.panel->fill(0x0000);
     sc.frame->setColorDepth(16);
@@ -277,36 +318,41 @@ void setup() {
   startSplash();
 
   connectWifi();
-  configTzTime(TIMEZONE, "pool.ntp.org", "time.google.com");  // TLS and reset times need the clock
+  if (!device::configured() || setupAsked || WiFi.status() != WL_CONNECTED) startSetupAp();
+  // TLS and reset times need the clock
+  configTzTime(g_device.timezone.c_str(), "pool.ntp.org", "time.google.com");
   MDNS.begin(HOSTNAME);
   MDNS.addService("http", "tcp", 80);
-#if ENABLE_PRINTER
-  bambu_source::begin();
-#endif
-  web::begin(renderFace, kFaces, startSplash, startSaver);
+  if (printer) bambu_source::begin();
+  web::begin(renderFace, printer ? 2 : 1, startSplash, startSaver);
 
   // Firmware updates over Wi-Fi (pio run -e esp32s3_ota -t upload), same password as the web page.
-  ArduinoOTA.setHostname(HOSTNAME);
-  ArduinoOTA.setPassword(WEB_PASS);
-  ArduinoOTA.setMdnsEnabled(false);  // mDNS is already running above
-  ArduinoOTA.onStart([] { Serial.println("[ota] update started"); });
-  ArduinoOTA.onError([](ota_error_t e) { Serial.printf("[ota] failed (%u)\n", e); });
-  ArduinoOTA.begin();
+  if (g_device.webPass.length()) {
+    ArduinoOTA.setHostname(HOSTNAME);
+    ArduinoOTA.setPassword(g_device.webPass.c_str());
+    ArduinoOTA.setMdnsEnabled(false);  // mDNS is already running above
+    ArduinoOTA.onStart([] { Serial.println("[ota] update started"); });
+    ArduinoOTA.onError([](ota_error_t e) { Serial.printf("[ota] failed (%u)\n", e); });
+    ArduinoOTA.begin();
+  }
 }
 
 void loop() {
+  static bool settled = false;
+  if (!settled && millis() >= QUICK_BOOT_MS) {
+    settled = true;
+    device::bootSettled();
+  }
   maintainWifi();
   ArduinoOTA.handle();
-#if ENABLE_PRINTER
-  bambu_source::loop();
-#endif
+  if (printer) bambu_source::loop();
   claude_source::loop();
   web::loop();
 
 #if HAS_PANELS
   applyBrightness();
   // Pointless with the backlight off at night, and it waits until there is a dashboard to wipe.
-  if (g_settings.saverMin && !saverOn && !splashRunning && g_claude.valid &&
+  if (g_settings.saverMin && !saverOn && !apOn && !splashRunning && g_claude.valid &&
       !(settings::isNight() && g_settings.nightBright == 0) &&
       millis() - saverDone >= g_settings.saverMin * 60000UL)
     startSaver();
@@ -316,10 +362,10 @@ void loop() {
     applyRotation();
     renderFace(0, frame0);
     pushFrame(panel0, frame0, prev0);
-#if ENABLE_PRINTER
-    renderFace(1, frame1);
-    pushFrame(panel1, frame1, prev1);
-#endif
+    if (printer) {
+      renderFace(1, frame1);
+      pushFrame(panel1, frame1, prev1);
+    }
   }
 #endif
 

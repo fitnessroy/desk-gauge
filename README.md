@@ -77,13 +77,10 @@ Things that cost us hours:
 ## Setup
 
 1. **Install PlatformIO:** `brew install platformio`
-2. **Secrets:** `cp include/secrets.example.h include/secrets.h`, then fill in:
-   - `WIFI_SSID` / `WIFI_PASS`: your main network.
-   - `WIFI_SSID2` / `WIFI_PASS2` (optional): a backup, e.g. a phone hotspot. The first network always
-     wins: the gauge moves back to it within about 3 minutes once it is in range again.
-   - `WEB_PASS` (required): the password for the gauge's web page and for updates over Wi-Fi. The
-     user name is `admin`.
-
+2. **Secrets (optional):** `cp include/secrets.example.h include/secrets.h` and fill in your Wi-Fi
+   and `WEB_PASS`, so your own gauge comes up on your network without the setup hotspot. The values
+   are only defaults: anything saved on the web page wins. Without `secrets.h` the gauge starts
+   with its setup hotspot (see [First-time setup](#first-time-setup-no-computer-needed)).
    `secrets.h` is gitignored; never commit it.
 3. **First flash, over USB.** Use the port marked **USB** (the native one), not COM.
    ```sh
@@ -96,7 +93,7 @@ Things that cost us hours:
    > (black screen, nothing happens). If that happens, tap RST. Check the gauge over the network instead.
 4. **Find it on the network.** The sign-in screen shows `desk-gauge.local` and its IP address. If
    `.local` doesn't open on your computer, use the IP (or look it up in your router).
-5. **Sign in to Claude:** open the page, log in with `admin` and your `WEB_PASS`, click
+5. **Sign in to Claude:** open the page, log in with `admin` and your page password, click
    *Open Claude sign-in*, approve, paste the code Claude shows into the page, and click *Connect*.
    The gauge keeps its own login in flash and refreshes it by itself. You only do this once.
 6. **Settings** on the same page: poll interval (120 s to 1 h, default 300 s), face, theme,
@@ -104,18 +101,45 @@ Things that cost us hours:
    They are stored on the device.
 7. **Later updates over Wi-Fi** (no cable):
    ```sh
-   GAUGE_PASS='your WEB_PASS' pio run -e esp32s3_ota -t upload --upload-port <gauge IP>
+   GAUGE_PASS='your page password' pio run -e esp32s3_ota -t upload --upload-port <gauge IP>
    ```
 
-### Moving it to another Wi-Fi
+### First-time setup (no computer needed)
 
-The networks are compiled in. Change `WIFI_SSID`/`WIFI_PASS` (or add the new one as `WIFI_SSID2`) in
-`secrets.h` and flash again, over Wi-Fi while it can still reach you, or over USB. Then it will join
-the new network by itself.
+A gauge without Wi-Fi set up opens a setup hotspot:
+
+1. Plug the gauge in. After the intro the screen shows **WI-FI SETUP**, a QR code, a network name
+   (`Desk-Gauge-XXXX`) and a password.
+2. Scan the QR code with a phone camera, or join that network by hand. The setup page opens by
+   itself; if it doesn't, open `http://192.168.4.1/`.
+3. Pick your Wi-Fi network (2.4 GHz), enter its password, choose a page password and check the
+   time zone (it is preselected from the phone). Tap **Save & restart**.
+4. Back on your own Wi-Fi, open `http://desk-gauge.local/` (or the IP shown on the gauge), log in as
+   `admin` with the page password, and sign in to Claude.
+
+The hotspot password is new every time and is only shown on the screen, so whoever joins it has the
+gauge in front of them. The setup page doesn't ask for the page password.
+
+### Device settings, restart and factory reset
+
+The **Device** section of the web page changes the Wi-Fi network (plus an optional backup network,
+e.g. a phone hotspot: the main one always wins, and the gauge moves back to it within about 3
+minutes), the page password, the time zone, the printer and the token bridge. **Save & restart**
+stores them and restarts. Stored passwords are never shown; leave a password box empty to keep it.
+**Restart** just restarts. **Factory reset** erases everything (Wi-Fi, page password, Claude sign-in,
+settings) and the gauge starts over with its setup hotspot.
+
+### Moving it to another Wi-Fi, or a lost page password
+
+If the gauge can't find its network when it starts, it opens the setup hotspot by itself (screen:
+**CAN'T FIND WI-FI**) and keeps trying the old network in the background. To open the hotspot while
+the Wi-Fi still works, for example after forgetting the page password: unplug the gauge while the
+intro plays, twice in a row, then plug it in again (screen: **SETUP MODE**). The hotspot closes by
+itself once the gauge is online and nobody has used it for 5 minutes.
 
 ### Web page security
 
-Every page and `/state.json` needs the login. After 5 wrong passwords, logins are blocked for a
+Every page and `/state.json` needs the login, except over the setup hotspot (see above). After 5 wrong passwords, logins are blocked for a
 minute. Changes (settings, sign-in, sign-out) also need a header that only the page itself sends, so
 another website can't make your browser change the gauge.
 
@@ -128,7 +152,8 @@ Claude Code on:
 python3 bridge/claude_usage_bridge.py          # serves :8787/claude.json
 ```
 
-Then set `CLAUDE_BRIDGE_URL` in `secrets.h` and reflash.
+Then enter its URL (e.g. `http://192.168.1.10:8787/claude.json`) as *Bridge URL* under **Device** on the
+web page and save.
 
 ## How the Claude data works
 
@@ -151,8 +176,8 @@ Then set `CLAUDE_BRIDGE_URL` in `secrets.h` and reflash.
 
 ## Notes
 
-- **Bambu:** the ESP connects directly to the printer (`bblp` / access code). If it can't connect on newer firmware, turn on *LAN Only* + *Developer Mode* on the printer. To see the printer's raw reports in the serial monitor, set `BAMBU_DUMP_RAW 1` in `config.h`.
-- **Time zone** for the clock and reset times: `TIMEZONE` in `config.h` (default Europe/Oslo).
+- **Bambu:** set up under **Device** on the web page (IP, serial, access code); the second screen turns on after the restart. The ESP connects directly to the printer (`bblp` / access code). If it can't connect on newer firmware, turn on *LAN Only* + *Developer Mode* on the printer. To see the printer's raw reports in the serial monitor, set `BAMBU_DUMP_RAW 1` in `config.h`.
+- **Time zone** for the clock and reset times: under **Device** on the web page (default Europe/Oslo).
 - **`/state.json`** on the device has everything as JSON (behind the same login), for Home Assistant or similar.
 
 ## Credits

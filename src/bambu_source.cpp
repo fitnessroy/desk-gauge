@@ -6,16 +6,15 @@
 #include <WiFiClientSecure.h>
 
 #include "config.h"
+#include "device.h"
 #include "model.h"
 
-#if ENABLE_PRINTER
 namespace bambu_source {
 
 static WiFiClientSecure tls;
 static PubSubClient mqtt(tls);
 static uint32_t lastAttempt = 0;
-static const String reportTopic = String("device/") + BAMBU_SERIAL + "/report";
-static const String requestTopic = String("device/") + BAMBU_SERIAL + "/request";
+static String reportTopic, requestTopic;
 
 // Reports after the initial "pushall" are deltas, so only overwrite fields that are present.
 template <typename T>
@@ -60,9 +59,9 @@ static void onMessage(char* topic, uint8_t* payload, unsigned int len) {
 }
 
 static void connect() {
-  Serial.printf("[bambu] connecting to %s:8883\n", BAMBU_IP);
+  Serial.printf("[bambu] connecting to %s:8883\n", g_device.bambuIp.c_str());
   String clientId = String(HOSTNAME) + "-" + String((uint32_t)ESP.getEfuseMac(), HEX);
-  if (!mqtt.connect(clientId.c_str(), "bblp", BAMBU_ACCESS_CODE)) {
+  if (!mqtt.connect(clientId.c_str(), "bblp", g_device.bambuCode.c_str())) {
     Serial.printf("[bambu] connect failed, state=%d\n", mqtt.state());
     return;
   }
@@ -73,8 +72,10 @@ static void connect() {
 }
 
 void begin() {
+  reportTopic = "device/" + g_device.bambuSerial + "/report";
+  requestTopic = "device/" + g_device.bambuSerial + "/request";
   tls.setInsecure();  // printer uses a self-signed certificate
-  mqtt.setServer(BAMBU_IP, 8883);
+  mqtt.setServer(g_device.bambuIp.c_str(), 8883);  // keeps the pointer; g_device outlives it
   mqtt.setBufferSize(BAMBU_MQTT_BUFFER);
   mqtt.setKeepAlive(30);
   mqtt.setSocketTimeout(5);
@@ -97,4 +98,3 @@ void loop() {
 }
 
 }  // namespace bambu_source
-#endif  // ENABLE_PRINTER

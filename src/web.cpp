@@ -2,10 +2,12 @@
 
 #include <ArduinoJson.h>
 #include <WebServer.h>
+#include <WiFi.h>
 
 #include "claude_auth.h"
 #include "claude_source.h"
 #include "config.h"
+#include "device.h"
 #include "model.h"
 #include "settings.h"
 #include "ui.h"
@@ -16,6 +18,7 @@ static WebServer server(80);
 static RenderFn renderFace;
 static ActionFn replaySplash, playSaver;
 static int faces = 1;
+static uint32_t restartAt = 0;  // set by Restart / Save & restart, once the answer is sent
 
 static const char kIndex[] PROGMEM = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -33,12 +36,22 @@ input,select,button{font:inherit;background:#222;color:#eee;border:1px solid #33
 button{cursor:pointer;background:#d97757;border-color:#d97757;color:#111;font-weight:600}
 button.ghost{background:#222;color:#ccc;border-color:#333}
 input[type=text]{width:100%;box-sizing:border-box}
+#device input:not([type=checkbox]),#device select{width:200px;box-sizing:border-box}
+details summary{cursor:pointer;color:#aaa;margin:10px 0}
+button.danger{background:#222;color:#eb5046;border-color:#5a2a26}
 .muted{color:#888;font-size:13px} .err{color:#eb5046} .ok{color:#6ec878}
 a{color:#d97757}
 </style></head><body>
 <div class="row" id="faces"></div>
 
-<section>
+<section id="welcome" hidden>
+<h2>Set up your Desk Gauge</h2>
+<p class="muted">Pick your Wi-Fi network (2.4 GHz) and choose a password for the gauge's web page.
+After the restart, connect back to your own Wi-Fi and open <b>http://desk-gauge.local/</b>; the address is
+also on the gauge's screen. Log in as <b>admin</b> with the password you choose here, then sign in to Claude.</p>
+</section>
+
+<section id="claude">
 <h2>Claude</h2>
 <div id="status" class="muted">...</div>
 <div id="signedout" hidden>
@@ -55,7 +68,7 @@ a{color:#d97757}
 </div>
 </section>
 
-<section>
+<section id="settings">
 <h2>Settings</h2>
 <label>Poll every <span><input type="number" id="poll" min="120" max="3600" style="width:80px"> s</span></label>
 <label>Face <select id="face"><option value="0">Rings</option><option value="1">Bars</option><option value="2">Rotate</option></select></label>
@@ -71,15 +84,132 @@ a{color:#d97757}
 <button class="ghost" onclick="post('/saver')">Play screensaver</button></p>
 </section>
 
+<section id="device">
+<h2>Device</h2>
+<label id="netrow" hidden>Networks found <select id="nets" onchange="if(this.value)$('ssid').value=this.value"></select></label>
+<label>Wi-Fi network <input id="ssid" autocomplete="off"></label>
+<label>Wi-Fi password <input type="password" id="pass" autocomplete="new-password"></label>
+<p class="muted" id="scanmsg"><button class="ghost" type="button" onclick="scan()">Find networks</button></p>
+<label>Page password <input type="password" id="webpass" autocomplete="new-password"></label>
+<label>Time zone <select id="tz"></select></label>
+<label id="tzcustom" hidden>POSIX TZ <input id="tzposix" placeholder="CET-1CEST,M3.5.0,M10.5.0/3"></label>
+<details><summary>Optional: backup network, printer, token bridge</summary>
+<label>Backup network <input id="ssid2" autocomplete="off"></label>
+<label>Backup password <input type="password" id="pass2" autocomplete="new-password"></label>
+<label>Printer IP <input id="bip" placeholder="192.168.1.50"></label>
+<label>Printer serial <input id="bserial"></label>
+<label>Access code <input type="password" id="bcode" autocomplete="new-password"></label>
+<label>Bridge URL <input id="bridge" placeholder="http://192.168.1.10:8787/claude.json"></label>
+</details>
+<p><button onclick="saveDevice()">Save &amp; restart</button> <span id="devmsg"></span></p>
+<p id="devbuttons"><button class="ghost" onclick="restart()">Restart</button>
+<button class="danger" onclick="factoryReset()">Factory reset</button></p>
+<p class="muted">Lost the page password, or moved the gauge to a new network? Unplug the gauge while the
+intro plays, twice in a row, then plug it in: its setup hotspot opens, with the details on the screen.</p>
+</section>
+
 <small><a href="/state.json">state.json</a> · firmware <span id="ver"></span></small>
 <script>
 const $=id=>document.getElementById(id);
 const post=(u,body)=>fetch(u,{method:'POST',headers:{'X-Gauge':'1'},body:body?new URLSearchParams(body):undefined});
-let FACES=1;
+let FACES=1,HOTSPOT=false;
+// Common time zones as POSIX TZ strings, with the browser zones (IANA) that pick them by default.
+const TZ=[
+['UTC','UTC0','UTC Etc/'],
+['UK, Ireland','GMT0BST,M3.5.0/1,M10.5.0','Europe/London Europe/Dublin'],
+['Portugal','WET0WEST,M3.5.0/1,M10.5.0','Europe/Lisbon Atlantic/Madeira'],
+['Central Europe (Oslo, Berlin, Paris)','CET-1CEST,M3.5.0,M10.5.0/3','Europe/'],
+['Eastern Europe (Helsinki, Athens, Kyiv)','EET-2EEST,M3.5.0/3,M10.5.0/4','Europe/Helsinki Europe/Athens Europe/Kyiv Europe/Kiev Europe/Riga Europe/Tallinn Europe/Vilnius Europe/Sofia Europe/Bucharest'],
+['Turkey','<+03>-3','Europe/Istanbul'],
+['Moscow','MSK-3','Europe/Moscow'],
+['Gulf (Dubai)','<+04>-4','Asia/Dubai Asia/Muscat'],
+['India','IST-5:30','Asia/Kolkata Asia/Calcutta'],
+['Bangkok, Jakarta','<+07>-7','Asia/Bangkok Asia/Jakarta Asia/Ho_Chi_Minh'],
+['China, Singapore, Perth','CST-8','Asia/Shanghai Asia/Singapore Asia/Hong_Kong Asia/Taipei Australia/Perth Asia/Kuala_Lumpur Asia/Manila'],
+['Japan, Korea','JST-9','Asia/Tokyo Asia/Seoul'],
+['Brisbane','AEST-10','Australia/Brisbane'],
+['Sydney, Melbourne','AEST-10AEDT,M10.1.0,M4.1.0/3','Australia/'],
+['Adelaide','ACST-9:30ACDT,M10.1.0,M4.1.0/3','Australia/Adelaide'],
+['New Zealand','NZST-12NZDT,M9.5.0,M4.1.0/3','Pacific/Auckland'],
+['US Eastern','EST5EDT,M3.2.0,M11.1.0','America/New_York America/Detroit America/Toronto America/Indiana'],
+['US Central','CST6CDT,M3.2.0,M11.1.0','America/Chicago America/Winnipeg'],
+['US Mountain','MST7MDT,M3.2.0,M11.1.0','America/Denver America/Edmonton'],
+['Arizona','MST7','America/Phoenix'],
+['US Pacific','PST8PDT,M3.2.0,M11.1.0','America/Los_Angeles America/Vancouver'],
+['Alaska','AKST9AKDT,M3.2.0,M11.1.0','America/Anchorage'],
+['Hawaii','HST10','Pacific/Honolulu'],
+['Brazil (São Paulo)','<-03>3','America/Sao_Paulo America/Argentina'],
+];
+function tzFromBrowser(){
+  const z=Intl.DateTimeFormat().resolvedOptions().timeZone||'';
+  let best=-1,len=0;
+  TZ.forEach((t,i)=>t[2].split(' ').forEach(p=>{if(z.startsWith(p)&&p.length>len){best=i;len=p.length}}));
+  return best;
+}
+function initDevice(d){
+  $('tz').innerHTML=TZ.map((t,i)=>`<option value="${i}">${t[0]}</option>`).join('')+'<option value="c">Other (POSIX TZ)</option>';
+  let i=TZ.findIndex(t=>t[1]==d.timezone);
+  if(!d.configured&&tzFromBrowser()>=0)i=tzFromBrowser();
+  $('tz').value=i>=0?i:'c';$('tzposix').value=d.timezone;$('tzcustom').hidden=i>=0;
+  $('tz').onchange=()=>{$('tzcustom').hidden=$('tz').value!='c'};
+  $('ssid').value=d.ssid;$('ssid2').value=d.ssid2;$('bip').value=d.printer_ip;$('bserial').value=d.printer_serial;$('bridge').value=d.bridge_url;
+  const keep='unchanged';
+  if(d.has_pass)$('pass').placeholder=keep;
+  if(d.has_pass2)$('pass2').placeholder=keep;
+  if(d.has_code)$('bcode').placeholder=keep;
+  $('webpass').placeholder=d.has_web_pass?keep:'choose one (8+ characters)';
+}
+async function scan(){
+  $('scanmsg').textContent='looking for networks...';
+  for(let i=0;i<20;i++){
+    const r=await (await fetch('/scan.json')).json();
+    if(r.networks){
+      // Strongest first, with a rough signal strength; picking one fills in the network box.
+      const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+      const bars=r=>r>-60?'strong':r>-75?'ok':'weak';
+      $('nets').innerHTML=`<option value="">pick one (${r.networks.length})</option>`+
+        r.networks.map(n=>`<option value="${esc(n.ssid)}">${esc(n.ssid)} · ${bars(n.rssi)}</option>`).join('');
+      $('nets').value=r.networks.some(n=>n.ssid==$('ssid').value)?$('ssid').value:'';
+      $('netrow').hidden=false;
+      $('scanmsg').innerHTML=`<button class="ghost" type="button" onclick="scan()">Search again</button>`;
+      return;
+    }
+    await new Promise(r=>setTimeout(r,1000));
+  }
+  $('scanmsg').innerHTML='No answer. <button class="ghost" type="button" onclick="scan()">Try again</button>';
+}
+function afterRestart(msg){
+  $('devmsg').innerHTML=`<span class="ok">${msg}</span>`;
+  if(!HOTSPOT)setTimeout(()=>location.reload(),15000);
+}
+async function saveDevice(){
+  const tz=$('tz').value=='c'?$('tzposix').value:TZ[$('tz').value][1];
+  $('devmsg').textContent='saving...';
+  const r=await (await post('/device',{ssid:$('ssid').value,pass:$('pass').value,ssid2:$('ssid2').value,pass2:$('pass2').value,
+    webpass:$('webpass').value,tz,bip:$('bip').value,bserial:$('bserial').value,bcode:$('bcode').value,bridge:$('bridge').value})).json();
+  if(!r.ok){$('devmsg').innerHTML=`<span class="err">${r.error}</span>`;return}
+  afterRestart(HOTSPOT?`Saved. The gauge now restarts and joins ${$('ssid').value}. Connect back to your own Wi-Fi and open http://desk-gauge.local/`
+                       :'Saved, restarting...');
+}
+async function restart(){
+  if(!confirm('Restart the gauge?'))return;
+  await post('/restart');afterRestart('restarting...');
+}
+async function factoryReset(){
+  if(!confirm('Erase everything on the gauge (Wi-Fi, page password, Claude sign-in, settings) and start over?'))return;
+  await post('/reset');
+  $('devmsg').innerHTML='<span class="ok">Erased. The gauge restarts with its setup hotspot; the details are on its screen.</span>';
+}
 function fmt(s){if(s<0)return'--';const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;return d?d+'d '+h+'h':h?h+'h '+m+'m':m+'m'}
 async function load(first){
   const st=await (await fetch('/state.json')).json(), c=st.claude;
   if(first){
+    HOTSPOT=st.device.via_hotspot;initDevice(st.device);
+    if(HOTSPOT){
+      // On the setup hotspot there is no internet: only the device setup is useful here.
+      for(const id of ['faces','claude','settings','devbuttons'])$(id).hidden=true;
+      $('welcome').hidden=false;scan();return;
+    }
     FACES=st.faces;$('ver').textContent=st.version;
     $('faces').innerHTML=[...Array(FACES).keys()].map(i=>`<img id="f${i}" src="/screen/${i}.bmp">`).join('');
     $('theme').innerHTML=st.themes.map((t,i)=>`<option value="${i}">${t}</option>`).join('');
@@ -114,7 +244,7 @@ async function save(){
 async function tick(){for(let i=0;i<FACES;i++){await new Promise(r=>{const n=new Image();
 n.onload=n.onerror=()=>{const el=$('f'+i);if(el)el.src=n.src;r()};n.src='/screen/'+i+'.bmp?t='+Date.now()})}
 setTimeout(tick,1500)}
-load(true).then(tick);setInterval(load,5000);
+load(true).then(()=>{if(!HOTSPOT){tick();setInterval(load,5000)}});
 </script></body></html>)HTML";
 
 static void handleScreen(int index) {
@@ -163,6 +293,11 @@ static void handleScreen(int index) {
   free(row);
 }
 
+// The request came in over the setup hotspot (whoever joined it can read its password off the screen).
+static bool viaHotspot() {
+  return (WiFi.getMode() & WIFI_AP) && server.client().localIP() == WiFi.softAPIP();
+}
+
 static void putWindow(JsonObject o, const UsageWindow& w) {
   o["pct"] = w.pct;
   o["resets_in"] = w.remaining();
@@ -192,20 +327,36 @@ static void handleState() {
     c["tok_per_min"] = cu.tokPerMin;
   }
 
-#if ENABLE_PRINTER
-  JsonObject p = doc["printer"].to<JsonObject>();
-  p["online"] = g_printer.online;
-  p["state"] = g_printer.gcodeState;
-  p["job"] = g_printer.job;
-  p["percent"] = g_printer.percent;
-  p["remaining_min"] = g_printer.remainingMin;
-  p["layer"] = g_printer.layer;
-  p["total_layers"] = g_printer.totalLayers;
-  p["nozzle"] = g_printer.nozzle;
-  p["bed"] = g_printer.bed;
-  p["chamber"] = g_printer.chamber;
-  p["print_error"] = g_printer.printError;
-#endif
+  if (device::printerOn()) {
+    JsonObject p = doc["printer"].to<JsonObject>();
+    p["online"] = g_printer.online;
+    p["state"] = g_printer.gcodeState;
+    p["job"] = g_printer.job;
+    p["percent"] = g_printer.percent;
+    p["remaining_min"] = g_printer.remainingMin;
+    p["layer"] = g_printer.layer;
+    p["total_layers"] = g_printer.totalLayers;
+    p["nozzle"] = g_printer.nozzle;
+    p["bed"] = g_printer.bed;
+    p["chamber"] = g_printer.chamber;
+    p["print_error"] = g_printer.printError;
+  }
+
+  // Device setup, without the passwords.
+  JsonObject d = doc["device"].to<JsonObject>();
+  d["configured"] = device::configured();
+  d["via_hotspot"] = viaHotspot();
+  d["ssid"] = g_device.ssid;
+  d["has_pass"] = g_device.pass.length() > 0;
+  d["ssid2"] = g_device.ssid2;
+  d["has_pass2"] = g_device.pass2.length() > 0;
+  d["has_web_pass"] = g_device.webPass.length() > 0;
+  d["timezone"] = g_device.timezone;
+  d["printer_ip"] = g_device.bambuIp;
+  d["printer_serial"] = g_device.bambuSerial;
+  d["has_code"] = g_device.bambuCode.length() > 0;
+  d["bridge_url"] = g_device.bridgeUrl;
+  if (WiFi.status() == WL_CONNECTED) d["ip"] = WiFi.localIP().toString();
 
   JsonObject s = doc["settings"].to<JsonObject>();
   s["poll_s"] = g_settings.pollS;
@@ -281,18 +432,85 @@ static void handleSettings() {
   server.send(204);
 }
 
-// Every page needs the web login from secrets.h (HTTP Basic). After WEB_MAX_FAILS wrong
+// Wi-Fi networks in range, strongest first. The scan runs in the background; until it is done the
+// answer is {"scanning":true} and the page asks again.
+static void handleScan() {
+  JsonDocument doc;
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_FAILED) WiFi.scanNetworks(true);
+  if (n < 0) {
+    doc["scanning"] = true;
+    sendJson(doc);
+    return;
+  }
+  JsonArray nets = doc["networks"].to<JsonArray>();
+  for (int i = 0; i < n; ++i) {  // results come strongest first; keep one entry per name
+    String ssid = WiFi.SSID(i);
+    bool seen = !ssid.length();
+    for (JsonObject o : nets) seen |= o["ssid"] == ssid;
+    if (seen) continue;
+    JsonObject o = nets.add<JsonObject>();
+    o["ssid"] = ssid;
+    o["rssi"] = WiFi.RSSI(i);
+  }
+  WiFi.scanDelete();
+  sendJson(doc);
+}
+
+// Saves the device setup and restarts. Empty password fields keep the stored one, as long as the
+// network they belong to stays the same.
+static void handleDevice() {
+  JsonDocument doc;
+  String ssid = server.arg("ssid"), ssid2 = server.arg("ssid2"), webPass = server.arg("webpass");
+  ssid.trim();
+  ssid2.trim();
+  if (!ssid.length()) doc["error"] = "Pick a Wi-Fi network";
+  else if (!webPass.length() && !g_device.webPass.length()) doc["error"] = "Choose a page password";
+  else if (webPass.length() && webPass.length() < 8) doc["error"] = "The page password needs 8 or more characters";
+  else if (server.arg("pass").length() && server.arg("pass").length() < 8) doc["error"] = "Wi-Fi passwords are 8 or more characters";
+  if (!doc["error"].isNull()) {
+    doc["ok"] = false;
+    sendJson(doc);
+    return;
+  }
+  auto secret = [](const char* field, String& stored, bool keepable) {
+    String v = server.arg(field);
+    if (v.length() || !keepable) stored = v;
+  };
+  secret("pass", g_device.pass, ssid == g_device.ssid);
+  secret("pass2", g_device.pass2, ssid2 == g_device.ssid2 && ssid2.length());
+  secret("webpass", g_device.webPass, true);
+  g_device.ssid = ssid;
+  g_device.ssid2 = ssid2;
+  String tz = server.arg("tz");
+  tz.trim();
+  if (tz.length()) g_device.timezone = tz;
+  g_device.bambuIp = server.arg("bip");
+  g_device.bambuIp.trim();
+  g_device.bambuSerial = server.arg("bserial");
+  g_device.bambuSerial.trim();
+  secret("bcode", g_device.bambuCode, g_device.bambuIp.length());
+  g_device.bridgeUrl = server.arg("bridge");
+  g_device.bridgeUrl.trim();
+  device::save();
+  doc["ok"] = true;
+  sendJson(doc);
+  restartAt = millis() + 1500;
+}
+
+// Every page needs the web login (HTTP Basic), except over the setup hotspot. After WEB_MAX_FAILS wrong
 // attempts in a row the page refuses all requests for WEB_LOCKOUT_MS.
 static uint8_t failedLogins = 0;
 static uint32_t lockedUntil = 0;
 
 static bool authorized() {
+  if (viaHotspot()) return true;
   if (lockedUntil && (int32_t)(millis() - lockedUntil) < 0) {
     server.send(429, "text/plain", "Too many wrong logins, try again in a minute");
     return false;
   }
   lockedUntil = 0;
-  if (server.authenticate(WEB_USER, WEB_PASS)) {
+  if (g_device.webPass.length() && server.authenticate(WEB_USER, g_device.webPass.c_str())) {
     failedLogins = 0;
     return true;
   }
@@ -306,9 +524,18 @@ static bool authorized() {
 }
 
 // Changes also need the page's own X-Gauge header, which a form on another site cannot send.
+// On the setup hotspot, requests for any other host (a phone checking for internet) are sent to the
+// setup page, which makes the phone open it by itself.
+static bool captiveRedirect() {
+  if (!viaHotspot() || server.hostHeader() == WiFi.softAPIP().toString()) return false;
+  server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/");
+  server.send(302, "text/plain", "");
+  return true;
+}
+
 static WebServer::THandlerFunction guarded(WebServer::THandlerFunction fn, bool change = false) {
   return [fn, change] {
-    if (!authorized()) return;
+    if (captiveRedirect() || !authorized()) return;
     if (change && server.header("X-Gauge") != "1") {
       server.send(403, "text/plain", "Forbidden");
       return;
@@ -340,6 +567,17 @@ void begin(RenderFn render, int faceCount, ActionFn replay, ActionFn saver) {
     server.send(204);
   }, true));
   server.on("/settings", HTTP_POST, guarded(handleSettings, true));
+  server.on("/scan.json", guarded(handleScan));
+  server.on("/device", HTTP_POST, guarded(handleDevice, true));
+  server.on("/restart", HTTP_POST, guarded([] {
+    server.send(204);
+    restartAt = millis() + 500;
+  }, true));
+  server.on("/reset", HTTP_POST, guarded([] {
+    server.send(204);
+    delay(200);
+    device::factoryReset();
+  }, true));
   server.on("/saver", HTTP_POST, guarded([] {
     if (playSaver) playSaver();
     server.send(204);
@@ -352,6 +590,9 @@ void begin(RenderFn render, int faceCount, ActionFn replay, ActionFn saver) {
   server.begin();
 }
 
-void loop() { server.handleClient(); }
+void loop() {
+  server.handleClient();
+  if (restartAt && (int32_t)(millis() - restartAt) >= 0) ESP.restart();
+}
 
 }  // namespace web

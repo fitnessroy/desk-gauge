@@ -1,13 +1,14 @@
-// desk-gauge secrets: your own networks and passwords.
+// desk-gauge secrets (optional): defaults for your own gauge, so it joins your network without the
+// setup hotspot.
 //
 //   cp include/secrets.example.h include/secrets.h
 //
 // then fill in secrets.h. It is gitignored, so it never ends up on GitHub; this example file is the
-// only one that is committed, and it holds no real values. A change here takes effect on the next
-// flash (USB, or over Wi-Fi with the esp32s3_ota env).
+// only one that is committed, and it holds no real values. Everything here can also be set on the
+// web page (Device), and what is saved there wins over this file.
 #pragma once
 
-// ---- Wi-Fi (required) ----------------------------------------------------------------------
+// ---- Wi-Fi ----------------------------------------------------------------------------------
 // Main network. 2.4 GHz only: the ESP32-S3 can't see 5 GHz networks.
 #define WIFI_SSID "your-ssid"
 #define WIFI_PASS "your-password"
@@ -17,9 +18,10 @@
 // #define WIFI_SSID2 "other-ssid"
 // #define WIFI_PASS2 "other-password"
 
-// ---- Web page login (required) -------------------------------------------------------------
+// ---- Web page login -----------------------------------------------------------------------
 // The browser asks for this on every page of http://desk-gauge.local/ (or the gauge's IP).
-// WEB_PASS is also the password for firmware updates over Wi-Fi (GAUGE_PASS='...').
+// WEB_PASS is also the password for firmware updates over Wi-Fi (GAUGE_PASS='...'). The gauge needs
+// it (or one set on the setup hotspot) before it leaves setup.
 #define WEB_USER "admin"
 #define WEB_PASS "choose-a-password"
 

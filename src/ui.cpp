@@ -663,4 +663,17 @@ void drawPrinter(LGFX_Sprite& s, const PrinterState& p) {
   if (p.job.length()) text(g, p.job.substring(0, 22), 120, 194, 12, t.dim);
 }
 
+void drawSetup(LGFX_Sprite& s, const String& title, const String& ssid, const String& pass) {
+  Ctx g{s, kThemes[constrain(g_settings.theme, 0, kThemeCount - 1)], s.width() / 240.0f, s.width() / 2};
+  s.fillScreen(g.t.bg);
+  text(g, title, 120, 38, 12, g.t.session);
+  // Phone cameras join the network from this; the setup page then opens by itself.
+  String qr = "WIFI:T:WPA;S:" + ssid + ";P:" + pass + ";;";
+  int w = g.X(112);
+  s.qrcode(qr.c_str(), g.c - w / 2, g.X(54), w, 1, true);
+  text(g, ssid, 120, 182, 12, g.t.text);
+  text(g, "password " + pass, 120, 199, 12, g.t.text);
+  text(g, "then " + WiFi.softAPIP().toString(), 120, 216, 12, g.t.dim);
+}
+
 }  // namespace ui

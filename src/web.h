@@ -3,8 +3,9 @@
 
 #include <LovyanGFX.hpp>
 
-// http://desk-gauge.local/ : live preview of the faces, Claude sign-in, and settings.
-// Also serves /state.json.
+// http://desk-gauge.local/ : live preview of the faces, Claude sign-in, settings and device setup
+// (Wi-Fi, page password, restart, factory reset). Also serves /state.json. Over the setup hotspot it
+// is a captive portal with only the device setup.
 namespace web {
 // Renders face `index` (0 = Claude, 1 = printer) into the given sprite.
 using RenderFn = std::function<void(int index, LGFX_Sprite& sprite)>;
